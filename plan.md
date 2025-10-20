@@ -1,131 +1,314 @@
 # Project Plan: Helios AI (Competition Grade v3)
 
-**A voice-first, AI-powered solar tracking platform with a real-time digital twin for intelligent energy optimization and transparent impact reporting.**
+A voice-first, AI-powered solar tracking platform with a real-time digital twin for intelligent energy optimization and transparent impact reporting.
 
 ---
 
 ## 1. Core Concept & Pitch
 
-**Helios AI** is an intelligent energy platform you can talk to. By saying **"Hey Helios,"** you activate a voice-first interface to a system that does more than follow the sun.  
-It runs a continuous **digital twin simulation** — using micro-dither sampling to gather real-world data from alternative positions — to A/B test its own tracking strategies in real-time.  
+Helios AI is an intelligent energy platform you can talk to. By saying "Hey Helios," you activate a voice-first interface to a system that does more than follow the sun.  
+It runs a continuous digital twin simulation -- using micro-dither sampling to gather real-world data from alternative positions -- to A/B test its own tracking strategies in real-time.  
 This proves its decisions with hard data.
 
-All system telemetry is streamed over a central **MQTT message bus** and visualized on a live-updating web dashboard, giving a transparent view of the hardware, AI, and environmental impact.
+All system telemetry is streamed over a central MQTT message bus and visualized on a live-updating web dashboard, giving a transparent view of the hardware, AI, and environmental impact.
 
 ---
 
-## 2. System Architecture & Technology
+## 2. System Architecture & Technology (Distributed Dev Model)
 
-We will use a robust, real-time, and decoupled architecture.  
-The core change is implementing a serial-to-MQTT bridge on the Pi, making the Arduino a simple, reliable sensor/motor controller.
+For rapid development and to leverage the M3 MacBook Pro's power, we will use a distributed architecture. This model separates hardware control from application logic, connected over your local Wi-Fi network.
 
-### **Custom Wake Word & Voice Interface**
+    Raspberry Pi (Hardware Gateway): Its sole responsibility is to interface directly with the Arduino. It runs the MQTT broker and the serial-to-MQTT bridge, effectively serving sensor data to the network and translating network commands into serial commands for the motors.
 
-The voice experience remains a non-negotiable priority.
+    M3 MacBook Pro (Application Server): This is the "brain" of the operation. It runs all Python-based services: the core AI logic, the Flask dashboard, all ADK agents (Control, Impact, Safety), and the Porcupine wake word engine, utilizing the Mac's superior processing power and native audio I/O.
 
-- We'll use **Picovoice Porcupine** running on the Pi to listen for the custom "Hey Helios" wake word.
-- Upon detection, it will immediately trigger the **Google Agent Development Kit (ADK)** to handle natural language understanding and command execution.
-- Commands are mapped to tools exposed by the Helios Control Agent.
+### Network Configuration
 
-### **Revised Data Flow Diagram**
+Both the Raspberry Pi and the MacBook Pro must be on the same Wi-Fi network. All application services on the Mac will be configured to connect to the MQTT broker using the Raspberry Pi's local IP address (e.g., 192.168.1.100).
 
-1. **Arduino:** Gathers data from LDRs and the INA219 sensor. It writes this data as a simple string to its USB serial port and listens for motor commands on the same port.  
-2. **Pi Serial-MQTT Bridge:** Reads serial data, parses it into JSON, and publishes to the MQTT Broker. Subscribes to command topics to send data back to the Arduino.  
-3. **MQTT Broker:** Runs on the Pi, managing all message traffic between services.  
-4. **Other Services (AI, Web, Voice):** Interact with MQTT, completely decoupled from the hardware.
+### Data Flow Diagram
 
-### **New Agent Layer**
+    Arduino: Gathers sensor data (LDRs, INA219), writes it to its USB serial port, and listens for motor commands.
 
-In addition to the Helios Control Agent (voice and command orchestration), two lightweight agents will run alongside it via the **Google ADK**:
+    Raspberry Pi:
 
-1. **Impact Agent** — Calculates environmental and cost benefits in real time.  
-   - Subscribes to `helios/sensors/raw` and `helios/ai/performance_delta`  
-   - Publishes summarized metrics to `helios/impact`  
-   - Tool:  
-     ```python
-     get_impact(window_s=3600) -> {energy_kWh, usd_saved, co2_g}
-     ```
+        Runs the Mosquitto MQTT Broker.
 
-2. **Safety Agent** — Monitors servo limits, motion rate, and temperature.  
-   - Subscribes to `helios/status`  
-   - Publishes alerts or clamped commands to `helios/safety`  
-   - Ensures safe operation under all modes  
+        Runs a Serial-to-MQTT Bridge script that reads the Arduino's serial output, parses it into JSON, and publishes it to the local MQTT broker. It also subscribes to command topics to send instructions back to the Arduino.
 
-### **Revised Circuit Diagram**
+    MacBook Pro (over Wi-Fi):
 
-- **Power:** Servos must be powered by an external 5V, 2A+ power supply with a large capacitor (1000µF) across the rails to smooth out spikes.  
-- **INA219 Power Sensor:** Connects via I2C (SDA=A4, SCL=A5) and measures both voltage and current.  
-- **LDRs & Servos:** Remain connected to analog and PWM pins respectively.  
-- **Ground:** Common ground shared across Arduino, servo supply, and INA219.
+        All agents, the AI logic, and the dashboard subscribe to topics from the Pi's MQTT broker.
+
+        Voice commands are processed on the Mac, which then publishes motor commands to the Pi's MQTT broker.
+
+### New Agent Layer
+
+In addition to the Helios Control Agent, two lightweight agents will run alongside it on the MacBook Pro via the Google ADK:
+
+    Impact Agent -- Calculates environmental and cost benefits in real time.
+
+        Subscribes to helios/sensors/raw and helios/ai/performance_delta.
+
+        Publishes summarized metrics to helios/impact.
+
+    Safety Agent -- Monitors servo limits, motion rate, and temperature.
+
+        Subscribes to helios/status.
+
+        Publishes alerts or clamped commands to helios/safety.
+
+### Revised Circuit Diagram
+
+    Power: Servos are powered by an external 5V, 2A+ power supply with a 1000uF capacitor across the rails.
+
+    INA219 Power Sensor: Connects via I2C (SDA=A4, SCL=A5) and measures voltage and current.
+
+    LDRs & Servos: Remain connected to analog and PWM pins respectively.
+
+    Ground: A common ground is shared across the Arduino, servo supply, and INA219.
 
 ---
 
 ## 3. MQTT Topic & Payload Schema
 
-This schema defines the structure of our data for all services and agents.
+This schema defines the data structure and remains unchanged in the distributed model.
 
-- **`helios/sensors/raw`**: Published by the serial bridge.  
-  ```json
-  {
-    "timestamp": 1666215482,
-    "ldr_tl": 812,
-    "ldr_tr": 750,
-    "ldr_bl": 550,
-    "ldr_br": 532,
-    "panel_voltage_V": 4.85,
-    "panel_current_mA": 150.2,
-    "panel_power_mW": 728.47
-  }
-  ```
+    helios/sensors/raw: Raw sensor data from the Pi.
+    JSON
 
-- **`helios/status`**: Published by the Core AI Logic.  
-  ```json
-  {
-    "timestamp": 1666215483,
-    "mode": "Predictive",
-    "pan_angle_deg": 112.5,
-    "tilt_angle_deg": 45.0,
-    "sun_azimuth_deg": 115.0,
-    "sun_elevation_deg": 46.2,
-    "cloud_cover_pct": 15
-  }
-  ```
+{ "timestamp": 1666215482, "ldr_tl": 812, "ldr_tr": 750, "ldr_bl": 550, "ldr_br": 532, "panel_voltage_V": 4.85, "panel_current_mA": 150.2, "panel_power_mW": 728.47 }
 
-- **`helios/command/position`**: Commands for the Arduino.  
-  ```json
-  {
-    "pan_angle_deg": 95.0,
-    "tilt_angle_deg": 40.0
-  }
-  ```
+helios/status: System status from the Core AI Logic.
+JSON
 
-- **`helios/ai/performance_delta`**: Published by the Digital Twin logic.  
-  ```json
-  {
-    "timestamp": 1666215490,
-    "window_s": 600,
-    "actual_strategy_power_mW": 730.1,
-    "shadow_strategy_power_mW": 655.8,
-    "delta_pct": 11.33
-  }
-  ```
+{ "timestamp": 1666215483, "mode": "Predictive", "pan_angle_deg": 112.5, "tilt_angle_deg": 45.0, "sun_azimuth_deg": 115.0, "sun_elevation_deg": 46.2, "cloud_cover_pct": 15 }
 
-- **`helios/impact`**: Published by the Impact Agent.  
-  ```json
-  {
-    "timestamp": 1666215599,
-    "energy_kWh": 0.012,
-    "usd_saved": 0.03,
-    "co2_g": 5.6
-  }
-  ```
+helios/command/position: Position commands for the Arduino.
+JSON
 
-- **`helios/safety`**: Published by the Safety Agent.  
-  ```json
-  {
-    "timestamp": 1666215603,
-    "servo_status": "normal",
-    "angle_violation": false,
+{ "pan_angle_deg": 95.0, "tilt_angle_deg": 40.0 }
+
+helios/ai/performance_delta: Digital Twin comparison data.
+JSON
+
+{ "timestamp": 1666215490, "window_s": 600, "actual_strategy_power_mW": 730.1, "shadow_strategy_power_mW": 655.8, "delta_pct": 11.33 }
+
+helios/impact: Data from the Impact Agent.
+JSON
+
+{ "timestamp": 1666215599, "energy_kWh": 0.012, "usd_saved": 0.03, "co2_g": 5.6 }
+
+helios/safety: Data from the Safety Agent.
+JSON
+
+    { "timestamp": 1666215603, "servo_status": "normal", "angle_violation": false, "temperature_C": 35.2 }
+
+---
+
+## 4. The Live Dashboard
+
+The dashboard runs on the MacBook Pro, providing real-time visibility into Helios AI.
+
+    Live Sky Map: Simplified to a single icon/percentage for overall cloud cover.
+
+    Real-Time Analytics: KPIs for Power (mW) and Energy Today (mWh).
+
+    A/B Comparison Graph: Displays results from the Digital Twin's micro-dither sampling.
+
+    Impact Metrics Panel (Impact Agent): Displays live CO2 avoided, cost savings, and total energy gained.
+
+    Safety Monitor (Safety Agent): Shows servo health and system safety status.
+
+    Voice Log: Shows the latest commands and AI responses for transparency.
+
+---
+
+## 5. Unique Feature: The Digital Twin (Micro-Dither Method)
+
+The Digital Twin logic runs on the MacBook Pro.
+
+    The AI logic determines the optimal position (Position A).
+
+    It calculates an alternative position (Position B) from the "shadow" logic.
+
+    It commands the tracker to move briefly to Position B, samples power, then returns to Position A.
+
+    It publishes both readings to helios/ai/performance_delta.
+
+---
+
+## 6. Updated Hackathon Plan
+
+### Phase 1: Hardware & Network Backbone (Hours 0-6)
+
+    Goal: Establish the distributed connection and achieve manual control.
+
+    Steps:
+
+        Assemble chassis, servos, sensors, and wiring.
+
+        Set up Mosquitto MQTT broker on the Pi.
+
+        Code Arduino sketch and the Pi's Serial-to-MQTT bridge.
+
+        Configure the network and test remote MQTT connection from Mac to Pi.
+
+    Milestone: Manually publish a move command from the Mac and see the physical tracker respond, while viewing sensor data streamed from the Pi.
+
+---
+
+### Phase 2: Core Logic & Live Dashboard (Hours 7-14)
+
+    Goal: Implement the AI brain and dashboard on the Mac.
+
+    Steps:
+
+        Build ai_logic.py on the Mac, connecting to the Pi's broker.
+
+        Set up Flask + Flask-SocketIO dashboard on the Mac.
+
+        Visualize real-time MQTT data coming from the Pi.
+
+    Milestone: System autonomously tracks the sun, with all logic on the Mac and the dashboard showing live data.
+
+---
+
+### Phase 3: Custom Wake Word & Voice Control (Hours 15-20)
+
+    Goal: Add voice interaction using the Mac's microphone.
+
+    Steps:
+
+        Integrate Porcupine wake word "Hey Helios" on the Mac.
+
+        Link Porcupine → ADK session → voice tools.
+
+        Add voice commands for status and mode switching.
+
+    Milestone: Fully hands-free control via "Hey Helios," spoken into the Mac.
+
+---
+
+### Phase 4: The Digital Twin & Final Polish (Hours 21-24+)
+
+    Goal: Implement the micro-dither sampling logic on the Mac.
+
+    Steps:
+
+        Add micro-dither logic to the AI running on the Mac.
+
+        Publish helios/ai/performance_delta.
+
+        Add "Was predictive mode worth it?" voice command.
+
+    Milestone: Helios AI can prove its decisions with data, all orchestrated from the Mac.
+
+---
+
+### Phase 5: Impact & Safety Agents (Stretch Goal / Polish)
+
+    Goal: Highlight sustainability and reliability.
+
+    Steps:
+
+        Implement impact_agent.py and safety_agent.py on the Mac.
+
+        Add both panels to the dashboard.
+
+    Milestone: Dashboard shows live impact and safety indicators.
+
+---
+
+## 7. ADK + Wake Word Integration (on MacBook Pro)
+
+    Packages: pip install google-adk paho-mqtt python-dotenv
+
+    Scaffold: adk create helios_agent, then edit helios_agent/agent.py to expose tools.
+
+    Run/Dev: All commands are run on the Mac.
+
+        CLI: adk run helios_agent
+
+        Web UI (mic supported): adk web --port 8000 helios_agent
+
+    Voice Path: Porcupine on the Mac listens for "Hey Helios" → starts ADK session → agent calls tools → publishes MQTT messages → TTS replies through Mac speakers.
+
+---
+
+## 8. Power & Wiring
+
+(This section remains unchanged as the physical wiring is identical.)
+
+    Always have a real electrical load for accurate readings.
+
+    Resistor sizing: R≈V2/W (use ≥2× watt rating).
+
+    High-side wiring: Panel + → INA219 VIN+ → INA219 VOUT+ → resistor → Panel −.
+
+    Common ground across all components.
+
+    Use a dedicated 5V 2-3A servo power supply with a 1000 uF capacitor.
+
+---
+
+## 9. Process Management
+
+Services to run (Raspberry Pi)
+
+The Pi runs a minimal set of services, configured to start on boot using systemd.
+
+    mosquitto (The MQTT Broker)
+
+    serial_bridge.py (The Python script connecting the Arduino to MQTT)
+
+Services to run (MacBook Pro)
+
+Use tmux or multiple terminal tabs for development.
+
+    Set Environment Variable: Before running any service, set the broker's IP:
+    Bash
+
+    export MQTT_BROKER_HOST='<YOUR_PI_IP_ADDRESS>'
+
+    Run Services:
+
+        python dashboard.py
+
+        python ai_logic.py
+
+        python impact_agent.py
+
+        python safety_agent.py
+
+        python porcupine_wake.py
+
+        adk run helios_agent
+
+---
+
+## 10. Agent Overview Diagram
+
+(This high-level diagram remains conceptually the same.)
+
++--------------------+
+| Helios Control     |
+| Voice + Commands   |
++--------------------+
+          ↓
++--------------------+
+| Impact Agent       |
+| CO2 + Cost Metrics |
++--------------------+
+          ↓
++--------------------+
+| Safety Agent       |
+| Hardware Health    |
++--------------------+
+
+---
+
+Final Outcome: Helios AI becomes an explainable, voice-driven, and sustainability-focused solar tracker that demonstrates measurable impact. The distributed development model ensures a smooth, powerful, and efficient workflow, perfectly suited for a competitive hackathon environment.
     "temperature_C": 35.2
   }
   ```
@@ -134,16 +317,16 @@ This schema defines the structure of our data for all services and agents.
 
 ## 4. The Live Dashboard
 
-The dashboard provides real-time visibility into Helios AI’s decisions, energy output, and impact.
+The dashboard provides real-time visibility into Helios AI's decisions, energy output, and impact.
 
 - **Live Sky Map:** Simplified to a single icon/percentage for overall cloud cover.  
 - **Real-Time Analytics:** KPIs for Power (mW) and Energy Today (mWh) from INA219 data.  
-- **A/B Comparison Graph:** Displays results from the Digital Twin’s micro-dither sampling.
+- **A/B Comparison Graph:** Displays results from the Digital Twin's micro-dither sampling.
 
 **New Dashboard Panels:**
 
 - **Impact Metrics Panel (Impact Agent):**  
-  Displays live CO₂ avoided, cost savings, and total energy gained.  
+  Displays live CO2 avoided, cost savings, and total energy gained.  
   Source: `helios/impact`
 
 - **Safety Monitor (Safety Agent):**  
@@ -170,7 +353,7 @@ This allows the system to justify its decisions with quantifiable, real-world da
 
 ## 6. Updated Hackathon Plan
 
-### **Phase 1: Hardware Integration & MQTT Backbone (Hours 0–6)**
+### **Phase 1: Hardware Integration & MQTT Backbone (Hours 0-6)**
 
 - **Goal:** Achieve real sensor communication and manual control over MQTT.  
 - **Steps:**
@@ -181,7 +364,7 @@ This allows the system to justify its decisions with quantifiable, real-world da
 
 ---
 
-### **Phase 2: Core Logic & Live Dashboard (Hours 7–14)**
+### **Phase 2: Core Logic & Live Dashboard (Hours 7-14)**
 
 - **Goal:** Implement the AI brain and dashboard.  
 - **Steps:**
@@ -192,24 +375,24 @@ This allows the system to justify its decisions with quantifiable, real-world da
 
 ---
 
-### **Phase 3: Custom Wake Word & Voice Control (Hours 15–20)**
+### **Phase 3: Custom Wake Word & Voice Control (Hours 15-20)**
 
 - **Goal:** Add branded voice interaction.  
 - **Steps:**
-  1. Integrate Porcupine wake word “Hey Helios.”  
+  1. Integrate Porcupine wake word "Hey Helios."  
   2. Link Porcupine → ADK session → voice tools.  
   3. Add voice commands for status and mode switching.  
-- **Milestone:** Fully hands-free control via “Hey Helios.”
+- **Milestone:** Fully hands-free control via "Hey Helios."
 
 ---
 
-### **Phase 4: The Digital Twin & Final Polish (Hours 21–24+)**
+### **Phase 4: The Digital Twin & Final Polish (Hours 21-24+)**
 
-- **Goal:** Implement the micro-dither sampling and “what-if” graph.  
+- **Goal:** Implement the micro-dither sampling and "what-if" graph.  
 - **Steps:**
   1. Add micro-dither sampling logic to AI.  
   2. Publish `helios/ai/performance_delta`.  
-  3. Add “Was predictive mode worth it?” voice command.  
+  3. Add "Was predictive mode worth it?" voice command.  
 - **Milestone:** Helios AI can prove its decisions with data.
 
 ---
@@ -218,7 +401,7 @@ This allows the system to justify its decisions with quantifiable, real-world da
 
 - **Goal:** Highlight sustainability and reliability.  
 - **Steps:**
-  1. Implement `impact_agent.py` (calculates CO₂ and cost savings).  
+  1. Implement `impact_agent.py` (calculates CO2 and cost savings).  
   2. Implement `safety_agent.py` (monitors servo limits and publishes alerts).  
   3. Add both panels to the dashboard.  
 - **Milestone:** Dashboard shows live impact metrics and safety indicators.
@@ -240,17 +423,17 @@ This allows the system to justify its decisions with quantifiable, real-world da
   - CLI: `adk run helios_agent`  
   - Web UI (mic supported): `adk web --port 8000 helios_agent`
 - **Voice Path:**  
-  Porcupine listens for “Hey Helios” → starts ADK session → agent calls tools → TTS replies.
+  Porcupine listens for "Hey Helios" → starts ADK session → agent calls tools → TTS replies.
 
 ---
 
 ## 8. Power & Wiring (Plain-English Checklist)
 
 - Always have a real electrical load for accurate readings.  
-- Resistor sizing: R ≈ V² / W (use ≥2× watt rating).  
+- Resistor sizing: R ≈ V^2 / W (use ≥2× watt rating).  
 - High-side wiring: Panel + → INA219 VIN+ → INA219 VOUT+ → resistor → Panel −  
 - Common ground across all components.  
-- Use a dedicated 5V 2–3A servo power supply with a 1000 µF capacitor.  
+- Use a dedicated 5V 2-3A servo power supply with a 1000 uF capacitor.  
 
 ---
 
@@ -273,7 +456,7 @@ This allows the system to justify its decisions with quantifiable, real-world da
           ↓
 +--------------------+
 | Impact Agent       |
-| CO₂ + Cost Metrics |
+| CO2 + Cost Metrics |
 +--------------------+
           ↓
 +--------------------+
@@ -285,4 +468,4 @@ This allows the system to justify its decisions with quantifiable, real-world da
 ---
 
 **Final Outcome:**  
-Helios AI becomes an explainable, voice-driven, and sustainability-focused solar tracker that demonstrates measurable impact — perfectly aligned with Google’s ADK innovation goals and OneEthos’ real-world values.
+Helios AI becomes an explainable, voice-driven, and sustainability-focused solar tracker that demonstrates measurable impact -- perfectly aligned with Google's ADK innovation goals and OneEthos' real-world values.
