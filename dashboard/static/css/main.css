@@ -42,7 +42,7 @@ body {
     overflow-x: hidden;
 }
 
-/* Animated Gradient Background */
+/* Animated Gradient Background - Enhanced for visibility */
 body::before {
     content: '';
     position: fixed;
@@ -52,17 +52,18 @@ body::before {
     height: 100%;
     z-index: -1;
     background: linear-gradient(135deg,
-        #0a0e1a 0%,
-        #1a1f35 25%,
-        #0f1628 50%,
-        #1a2238 75%,
-        #0a0e1a 100%
+        #0a0e27 0%,
+        #1a2445 20%,
+        #0d1633 40%,
+        #1e2a52 60%,
+        #121b3a 80%,
+        #0a0e27 100%
     );
     background-size: 400% 400%;
-    animation: gradientShift 20s ease infinite;
+    animation: gradientShift 15s ease-in-out infinite;
 }
 
-/* Subtle mesh overlay for depth */
+/* Enhanced mesh overlay with accent colors */
 body::after {
     content: '';
     position: fixed;
@@ -72,39 +73,52 @@ body::after {
     height: 100%;
     z-index: -1;
     background:
-        radial-gradient(circle at 20% 50%, rgba(255, 184, 0, 0.03) 0%, transparent 50%),
-        radial-gradient(circle at 80% 80%, rgba(0, 217, 255, 0.04) 0%, transparent 50%),
-        radial-gradient(circle at 40% 20%, rgba(255, 184, 0, 0.02) 0%, transparent 50%);
-    animation: meshFloat 30s ease-in-out infinite;
+        radial-gradient(circle at 20% 50%, rgba(255, 184, 0, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 80% 80%, rgba(0, 217, 255, 0.10) 0%, transparent 45%),
+        radial-gradient(circle at 50% 10%, rgba(255, 184, 0, 0.06) 0%, transparent 35%),
+        radial-gradient(circle at 10% 90%, rgba(0, 217, 255, 0.07) 0%, transparent 40%),
+        radial-gradient(circle at 60% 60%, rgba(138, 43, 226, 0.05) 0%, transparent 50%);
+    animation: meshFloat 25s ease-in-out infinite;
 }
 
 @keyframes gradientShift {
-    0%, 100% {
+    0% {
         background-position: 0% 50%;
     }
     25% {
-        background-position: 50% 75%;
+        background-position: 100% 75%;
     }
     50% {
-        background-position: 100% 50%;
+        background-position: 100% 25%;
     }
     75% {
-        background-position: 50% 25%;
+        background-position: 0% 25%;
+    }
+    100% {
+        background-position: 0% 50%;
     }
 }
 
 @keyframes meshFloat {
-    0%, 100% {
-        transform: translate(0, 0) scale(1);
+    0% {
+        transform: translate(0, 0) scale(1) rotate(0deg);
         opacity: 1;
     }
-    33% {
-        transform: translate(30px, -30px) scale(1.1);
-        opacity: 0.8;
+    25% {
+        transform: translate(40px, -40px) scale(1.15) rotate(2deg);
+        opacity: 0.85;
     }
-    66% {
-        transform: translate(-20px, 20px) scale(0.9);
+    50% {
+        transform: translate(-30px, 30px) scale(0.9) rotate(-1deg);
+        opacity: 0.95;
+    }
+    75% {
+        transform: translate(35px, 25px) scale(1.1) rotate(1deg);
         opacity: 0.9;
+    }
+    100% {
+        transform: translate(0, 0) scale(1) rotate(0deg);
+        opacity: 1;
     }
 }
 
@@ -135,6 +149,32 @@ body::after {
     -webkit-text-fill-color: transparent;
     background-clip: text;
     letter-spacing: -0.5px;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+/* Logo Icon - Sleek SVG with Subtle Glow */
+.logo-icon {
+    width: 28px;
+    height: 28px;
+    filter: drop-shadow(0 0 8px rgba(255, 184, 0, 0.4));
+    animation: iconGlow 3s ease-in-out infinite;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.logo-icon:hover {
+    filter: drop-shadow(0 0 12px rgba(255, 184, 0, 0.6));
+    transform: scale(1.1) rotate(5deg);
+}
+
+@keyframes iconGlow {
+    0%, 100% {
+        filter: drop-shadow(0 0 8px rgba(255, 184, 0, 0.4));
+    }
+    50% {
+        filter: drop-shadow(0 0 12px rgba(0, 217, 255, 0.5));
+    }
 }
 
 .connection-status {
@@ -286,15 +326,35 @@ body::after {
     background: var(--bg-dark);
     padding: 0.5rem 1rem;
     border-radius: 6px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.location-display:hover {
+    background: var(--bg-panel-hover);
+    transform: translateY(-1px);
+}
+
+/* Location Icon - Sleek SVG Pin */
 .location-icon {
-    font-size: 1.2rem;
+    width: 18px;
+    height: 18px;
+    filter: drop-shadow(0 0 4px rgba(255, 184, 0, 0.5));
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.location-display:hover .location-icon {
+    filter: drop-shadow(0 0 8px rgba(255, 184, 0, 0.7));
+    transform: scale(1.15);
 }
 
 .location-text {
     font-size: 0.85rem;
     color: var(--text-secondary);
+    transition: color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.location-display:hover .location-text {
+    color: var(--text-primary);
 }
 
 /* Leaflet map adjustments */
@@ -730,8 +790,8 @@ body::after {
     box-shadow: 0 4px 12px rgba(255, 184, 0, 0.15);
 }
 
+/* Impact Icons - Sleek SVG with Gradient Backgrounds */
 .impact-icon {
-    font-size: 2.5rem;
     width: 64px;
     height: 64px;
     display: flex;
@@ -740,6 +800,35 @@ body::after {
     border-radius: 50%;
     background: linear-gradient(135deg, rgba(255, 184, 0, 0.15) 0%, rgba(0, 217, 255, 0.15) 100%);
     border: 1px solid var(--glass-border);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.impact-icon svg {
+    width: 36px;
+    height: 36px;
+    filter: drop-shadow(0 0 6px rgba(255, 184, 0, 0.4));
+}
+
+.impact-item:hover .impact-icon {
+    transform: scale(1.1) rotate(-5deg);
+    box-shadow: 0 4px 12px rgba(255, 184, 0, 0.3);
+}
+
+.impact-item:hover .impact-icon svg {
+    filter: drop-shadow(0 0 10px rgba(255, 184, 0, 0.6));
+}
+
+/* Specific colors for different impact types */
+.impact-icon.energy {
+    background: linear-gradient(135deg, rgba(255, 184, 0, 0.2) 0%, rgba(255, 160, 0, 0.15) 100%);
+}
+
+.impact-icon.cost {
+    background: linear-gradient(135deg, rgba(0, 217, 255, 0.2) 0%, rgba(0, 153, 204, 0.15) 100%);
+}
+
+.impact-icon.co2 {
+    background: linear-gradient(135deg, rgba(52, 211, 153, 0.2) 0%, rgba(16, 185, 129, 0.15) 100%);
 }
 
 /* Enhanced Safety Status */
@@ -771,16 +860,28 @@ body::after {
     }
 }
 
+/* Safety Status Icon - Dynamic SVG */
 .status-icon {
-    font-size: 3.5rem;
-    color: var(--success);
-    filter: drop-shadow(0 0 10px var(--success));
+    width: 80px;
+    height: 80px;
+    filter: drop-shadow(0 0 12px rgba(52, 211, 153, 0.6));
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .safety-status.alert .status-icon {
-    color: var(--danger);
-    filter: drop-shadow(0 0 10px var(--danger));
+    filter: drop-shadow(0 0 15px rgba(248, 113, 113, 0.8));
+    animation: iconPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes iconPulse {
+    0%, 100% {
+        transform: scale(1);
+        filter: drop-shadow(0 0 15px rgba(248, 113, 113, 0.8));
+    }
+    50% {
+        transform: scale(1.05);
+        filter: drop-shadow(0 0 20px rgba(248, 113, 113, 1));
+    }
 }
 
 /* Scrollbar Styling */
@@ -808,9 +909,9 @@ body::after {
     body::before {
         animation: none;
         background: linear-gradient(135deg,
-            #0a0e1a 0%,
-            #1a1f35 50%,
-            #0a0e1a 100%
+            #0a0e27 0%,
+            #1a2445 50%,
+            #0a0e27 100%
         );
         background-size: 100% 100%;
         background-position: 0% 50%;
@@ -819,6 +920,7 @@ body::after {
     /* Disable mesh overlay animation */
     body::after {
         animation: none;
+        opacity: 0.7;
     }
 
     /* Disable all keyframe animations */
@@ -855,5 +957,21 @@ body::after {
     .cloud-value,
     .status-icon {
         transition: none;
+    }
+
+    /* Disable icon animations */
+    .logo-icon,
+    .location-icon,
+    .impact-icon,
+    .status-icon {
+        animation: none !important;
+        filter: none !important;
+    }
+
+    .logo-icon:hover,
+    .location-icon:hover,
+    .impact-icon:hover,
+    .status-icon:hover {
+        transform: none !important;
     }
 }

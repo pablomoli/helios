@@ -8,7 +8,7 @@ class SafetyMonitor {
     }
 
     update(data) {
-        const statusIcon = this.safetyStatus.querySelector('.status-icon');
+        const statusIcon = this.safetyStatus.querySelector('.status-icon use');
         const statusText = this.safetyStatus.querySelector('.status-text');
 
         // Update servo status
@@ -28,11 +28,11 @@ class SafetyMonitor {
 
         if (isNormal) {
             this.safetyStatus.classList.remove('alert');
-            statusIcon.textContent = '✓';
+            statusIcon.setAttribute('href', '#icon-check');
             statusText.textContent = 'Normal';
         } else {
             this.safetyStatus.classList.add('alert');
-            statusIcon.textContent = '⚠';
+            statusIcon.setAttribute('href', '#icon-warning');
             statusText.textContent = 'Alert';
         }
     }
