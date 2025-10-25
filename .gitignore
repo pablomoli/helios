@@ -63,7 +63,7 @@ ehthumbs.db
 Desktop.ini
 
 # Porcupine wake word files (if you have custom ones)
-*.ppn
+# *.ppn
 
 # Backup files
 *.bak

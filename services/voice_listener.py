@@ -21,6 +21,8 @@ env_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
 ACCESS_KEY = os.getenv("PORCUPINE_API_KEY")
+CUSTOM_KEYWORD_NAME = 'Hey Helios' 
+CUSTOM_KEYWORD_PATH = Path(__file__).parent / f"{CUSTOM_KEYWORD_NAME.lower().replace(' ', '_')}.ppn"
 
 # WebSocket client for sending voice queries to the agent
 sio = socketio.Client() 
@@ -46,8 +48,9 @@ def run_voice_assistant():
 
     ppn = pvporcupine.create(
         access_key=ACCESS_KEY,
-        keywords=['computer']  # Wake word
+        keyword_paths=[str(CUSTOM_KEYWORD_PATH)]
     )
+
     recorder = pvrecorder.PvRecorder(frame_length=ppn.frame_length)
     r = sr.Recognizer()
 
