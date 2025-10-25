@@ -10,37 +10,37 @@ Helios AI is an intelligent energy platform you can talk to. By saying "Hey Heli
 It runs a continuous digital twin simulation -- using micro-dither sampling to gather real-world data from alternative positions -- to A/B test its own tracking strategies in real-time.  
 This proves its decisions with hard data.
 
-All system telemetry is streamed over a central MQTT message bus and visualized on a live-updating web dashboard, giving a transparent view of the hardware, AI, and environmental impact.
+All system telemetry is streamed over WebSocket connections and visualized on a live-updating web dashboard, giving a transparent view of the hardware, AI, and environmental impact.
 
 ---
 
-## 2. System Architecture & Technology (Distributed Dev Model)
+## 2. System Architecture & Technology
 
-For rapid development and to leverage the M3 MacBook Pro's power, we will use a distributed architecture. This model separates hardware control from application logic, connected over your local Wi-Fi network.
+The system uses a WebSocket-based architecture for real-time communication between components.
 
-    Raspberry Pi (Hardware Gateway): Its sole responsibility is to interface directly with the Arduino. It runs the MQTT broker and the serial-to-MQTT bridge, effectively serving sensor data to the network and translating network commands into serial commands for the motors.
+    Backend Server: Runs the WebSocket server and interfaces with the Arduino. It handles all hardware communication and serves sensor data to connected clients while accepting commands from the web interface.
 
-    M3 MacBook Pro (Application Server): This is the "brain" of the operation. It runs all Python-based services: the core AI logic, the Flask dashboard, all ADK agents (Control, Impact, Safety), and the Porcupine wake word engine, utilizing the Mac's superior processing power and native audio I/O.
+    M3 MacBook Pro (Development Machine): This is where you run the AI logic, the Flask dashboard, all ADK agents (Control, Impact, Safety), and the Porcupine wake word engine, utilizing the Mac's superior processing power and native audio I/O.
 
 ### Network Configuration
 
-Both the Raspberry Pi and the MacBook Pro must be on the same Wi-Fi network. All application services on the Mac will be configured to connect to the MQTT broker using the Raspberry Pi's local IP address (e.g., 192.168.1.100).
+All application services on the Mac will be configured to connect to the WebSocket server using the server's URL (e.g., ws://localhost:5000 for local development).
 
 ### Data Flow Diagram
 
     Arduino: Gathers sensor data (LDRs, INA219), writes it to its USB serial port, and listens for motor commands.
 
-    Raspberry Pi:
+    Backend Server:
 
-        Runs the Mosquitto MQTT Broker.
+        Runs the WebSocket Server (using Flask-SocketIO).
 
-        Runs a Serial-to-MQTT Bridge script that reads the Arduino's serial output, parses it into JSON, and publishes it to the local MQTT broker. It also subscribes to command topics to send instructions back to the Arduino.
+        Runs a Serial-to-WebSocket Bridge script that reads the Arduino's serial output, parses it into JSON, and emits it to all connected WebSocket clients. It also listens for command events to send instructions back to the Arduino.
 
-    MacBook Pro (over Wi-Fi):
+    MacBook Pro:
 
-        All agents, the AI logic, and the dashboard subscribe to topics from the Pi's MQTT broker.
+        All agents, the AI logic, and the dashboard connect to the WebSocket server.
 
-        Voice commands are processed on the Mac, which then publishes motor commands to the Pi's MQTT broker.
+        Voice commands are processed on the Mac, which then emits motor commands to the WebSocket server.
 
 ### New Agent Layer
 
@@ -48,15 +48,15 @@ In addition to the Helios Control Agent, two lightweight agents will run alongsi
 
     Impact Agent -- Calculates environmental and cost benefits in real time.
 
-        Subscribes to helios/sensors/raw and helios/ai/performance_delta.
+        Listens to sensors_raw and ai_performance_delta WebSocket events.
 
-        Publishes summarized metrics to helios/impact.
+        Emits summarized metrics via the impact event.
 
     Safety Agent -- Monitors servo limits, motion rate, and temperature.
 
-        Subscribes to helios/status.
+        Listens to the status WebSocket event.
 
-        Publishes alerts or clamped commands to helios/safety.
+        Emits alerts or clamped commands via the safety event.
 
 ### Revised Circuit Diagram
 
@@ -70,36 +70,36 @@ In addition to the Helios Control Agent, two lightweight agents will run alongsi
 
 ---
 
-## 3. MQTT Topic & Payload Schema
+## 3. WebSocket Events & Payload Schema
 
-This schema defines the data structure and remains unchanged in the distributed model.
+This schema defines the data structure for WebSocket events.
 
-    helios/sensors/raw: Raw sensor data from the Pi.
+    sensors_raw: Raw sensor data from the backend server.
     JSON
 
 { "timestamp": 1666215482, "ldr_tl": 812, "ldr_tr": 750, "ldr_bl": 550, "ldr_br": 532, "panel_voltage_V": 4.85, "panel_current_mA": 150.2, "panel_power_mW": 728.47 }
 
-helios/status: System status from the Core AI Logic.
+status: System status from the Core AI Logic.
 JSON
 
 { "timestamp": 1666215483, "mode": "Predictive", "pan_angle_deg": 112.5, "tilt_angle_deg": 45.0, "sun_azimuth_deg": 115.0, "sun_elevation_deg": 46.2, "cloud_cover_pct": 15 }
 
-helios/command/position: Position commands for the Arduino.
+command_position: Position commands for the Arduino.
 JSON
 
 { "pan_angle_deg": 95.0, "tilt_angle_deg": 40.0 }
 
-helios/ai/performance_delta: Digital Twin comparison data.
+ai_performance_delta: Digital Twin comparison data.
 JSON
 
 { "timestamp": 1666215490, "window_s": 600, "actual_strategy_power_mW": 730.1, "shadow_strategy_power_mW": 655.8, "delta_pct": 11.33 }
 
-helios/impact: Data from the Impact Agent.
+impact: Data from the Impact Agent.
 JSON
 
 { "timestamp": 1666215599, "energy_kWh": 0.012, "usd_saved": 0.03, "co2_g": 5.6 }
 
-helios/safety: Data from the Safety Agent.
+safety: Data from the Safety Agent.
 JSON
 
     { "timestamp": 1666215603, "servo_status": "normal", "angle_violation": false, "temperature_C": 35.2 }
@@ -142,67 +142,67 @@ The Digital Twin logic runs on the MacBook Pro.
 
 ### Phase 1: Hardware & Network Backbone (Hours 0-6)
 
-    Goal: Establish the distributed connection and achieve manual control.
+    Goal: Establish the connection and achieve manual control.
 
     Steps:
 
         Assemble chassis, servos, sensors, and wiring.
 
-        Set up Mosquitto MQTT broker on the Pi.
+        Set up WebSocket server (Flask-SocketIO).
 
-        Code Arduino sketch and the Pi's Serial-to-MQTT bridge.
+        Code Arduino sketch and the Serial-to-WebSocket bridge.
 
-        Configure the network and test remote MQTT connection from Mac to Pi.
+        Test WebSocket connection and data flow.
 
-    Milestone: Manually publish a move command from the Mac and see the physical tracker respond, while viewing sensor data streamed from the Pi.
+    Milestone: Manually emit a move command and see the physical tracker respond, while viewing sensor data streamed via WebSocket.
 
 ---
 
 ### Phase 2: Core Logic & Live Dashboard (Hours 7-14)
 
-    Goal: Implement the AI brain and dashboard on the Mac.
+    Goal: Implement the AI brain and dashboard.
 
     Steps:
 
-        Build ai_logic.py on the Mac, connecting to the Pi's broker.
+        Build ai_logic.py, connecting to the WebSocket server.
 
-        Set up Flask + Flask-SocketIO dashboard on the Mac.
+        Set up Flask + Flask-SocketIO dashboard.
 
-        Visualize real-time MQTT data coming from the Pi.
+        Visualize real-time data coming via WebSocket.
 
-    Milestone: System autonomously tracks the sun, with all logic on the Mac and the dashboard showing live data.
+    Milestone: System autonomously tracks the sun, with the dashboard showing live data.
 
 ---
 
 ### Phase 3: Custom Wake Word & Voice Control (Hours 15-20)
 
-    Goal: Add voice interaction using the Mac's microphone.
+    Goal: Add voice interaction.
 
     Steps:
 
-        Integrate Porcupine wake word "Hey Helios" on the Mac.
+        Integrate Porcupine wake word "Hey Helios".
 
         Link Porcupine → ADK session → voice tools.
 
         Add voice commands for status and mode switching.
 
-    Milestone: Fully hands-free control via "Hey Helios," spoken into the Mac.
+    Milestone: Fully hands-free control via "Hey Helios."
 
 ---
 
 ### Phase 4: The Digital Twin & Final Polish (Hours 21-24+)
 
-    Goal: Implement the micro-dither sampling logic on the Mac.
+    Goal: Implement the micro-dither sampling logic.
 
     Steps:
 
-        Add micro-dither logic to the AI running on the Mac.
+        Add micro-dither logic to the AI.
 
-        Publish helios/ai/performance_delta.
+        Emit ai_performance_delta event.
 
         Add "Was predictive mode worth it?" voice command.
 
-    Milestone: Helios AI can prove its decisions with data, all orchestrated from the Mac.
+    Milestone: Helios AI can prove its decisions with data.
 
 ---
 
@@ -212,7 +212,7 @@ The Digital Twin logic runs on the MacBook Pro.
 
     Steps:
 
-        Implement impact_agent.py and safety_agent.py on the Mac.
+        Implement impact_agent.py and safety_agent.py.
 
         Add both panels to the dashboard.
 
@@ -220,19 +220,19 @@ The Digital Twin logic runs on the MacBook Pro.
 
 ---
 
-## 7. ADK + Wake Word Integration (on MacBook Pro)
+## 7. ADK + Wake Word Integration
 
-    Packages: pip install google-adk paho-mqtt python-dotenv
+    Packages: pip install google-adk python-socketio python-dotenv
 
     Scaffold: adk create helios_agent, then edit helios_agent/agent.py to expose tools.
 
-    Run/Dev: All commands are run on the Mac.
+    Run/Dev:
 
         CLI: adk run helios_agent
 
         Web UI (mic supported): adk web --port 8000 helios_agent
 
-    Voice Path: Porcupine on the Mac listens for "Hey Helios" → starts ADK session → agent calls tools → publishes MQTT messages → TTS replies through Mac speakers.
+    Voice Path: Porcupine listens for "Hey Helios" → starts ADK session → agent calls tools → emits WebSocket events → TTS replies.
 
 ---
 
@@ -254,22 +254,22 @@ The Digital Twin logic runs on the MacBook Pro.
 
 ## 9. Process Management
 
-Services to run (Raspberry Pi)
+Services to run (Backend Server)
 
-The Pi runs a minimal set of services, configured to start on boot using systemd.
+The backend server runs:
 
-    mosquitto (The MQTT Broker)
+    Flask-SocketIO WebSocket server
 
-    serial_bridge.py (The Python script connecting the Arduino to MQTT)
+    serial_bridge.py (The Python script connecting the Arduino to WebSocket)
 
-Services to run (MacBook Pro)
+Services to run (Development Machine)
 
 Use tmux or multiple terminal tabs for development.
 
-    Set Environment Variable: Before running any service, set the broker's IP:
+    Set Environment Variable: Before running any service, set the WebSocket server URL:
     Bash
 
-    export MQTT_BROKER_HOST='<YOUR_PI_IP_ADDRESS>'
+    export WEBSOCKET_SERVER_URL='ws://localhost:5000'
 
     Run Services:
 

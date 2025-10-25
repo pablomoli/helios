@@ -3,9 +3,6 @@ flask==3.0.0
 flask-socketio==5.3.5
 python-socketio==5.10.0
 
-# MQTT Client
-paho-mqtt==1.6.1
-
 # Environment Variables
 python-dotenv==1.0.0
 

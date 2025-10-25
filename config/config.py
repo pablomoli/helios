@@ -13,10 +13,8 @@ load_dotenv(dotenv_path=env_path)
 class Config:
     """Main configuration class"""
 
-    # MQTT Settings
-    MQTT_BROKER_HOST = os.getenv('MQTT_BROKER_HOST', 'localhost')
-    MQTT_BROKER_PORT = int(os.getenv('MQTT_BROKER_PORT', 1883))
-    MQTT_KEEP_ALIVE = int(os.getenv('MQTT_KEEP_ALIVE', 60))
+    # WebSocket Settings
+    WEBSOCKET_SERVER_URL = os.getenv('WEBSOCKET_SERVER_URL', 'ws://localhost:5000')
 
     # OpenWeatherMap API (NEVER log or print this!)
     OPENWEATHER_API_KEY = os.getenv('OPENWEATHER_API_KEY')
@@ -59,7 +57,7 @@ class Config:
         """Returns a safe string representation without secrets"""
         return f"""
 Helios AI Configuration:
-  MQTT Broker: {cls.MQTT_BROKER_HOST}:{cls.MQTT_BROKER_PORT}
+  WebSocket Server: {cls.WEBSOCKET_SERVER_URL}
   Location: ({cls.WEATHER_LAT}, {cls.WEATHER_LON})
   Dashboard Port: {cls.DASHBOARD_PORT}
   Mock Data Mode: {cls.MOCK_DATA_MODE}
@@ -69,16 +67,16 @@ Helios AI Configuration:
         """.strip()
 
 
-# MQTT Topics (centralized for consistency)
-class Topics:
-    """MQTT topic definitions"""
-    SENSORS_RAW = "helios/sensors/raw"
-    STATUS = "helios/status"
-    COMMAND_POSITION = "helios/command/position"
-    AI_PERFORMANCE_DELTA = "helios/ai/performance_delta"
-    IMPACT = "helios/impact"
-    SAFETY = "helios/safety"
-    VOICE_LOG = "helios/voice/log"
+# WebSocket Events (centralized for consistency)
+class Events:
+    """WebSocket event definitions"""
+    SENSORS_RAW = "sensors_raw"
+    STATUS = "status"
+    COMMAND_POSITION = "command_position"
+    AI_PERFORMANCE_DELTA = "ai_performance_delta"
+    IMPACT = "impact"
+    SAFETY = "safety"
+    VOICE_LOG = "voice_log"
 
 
 if __name__ == "__main__":

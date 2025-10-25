@@ -9,7 +9,7 @@ from typing import Dict
 
 
 class MockDataGenerator:
-    """Generates realistic mock data for all MQTT topics"""
+    """Generates realistic mock data for all WebSocket events"""
 
     def __init__(self):
         self.start_time = time.time()

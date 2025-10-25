@@ -43,7 +43,7 @@ This will verify all settings are loaded correctly WITHOUT exposing secrets.
 
 ## 📡 System Architecture
 
-- **Raspberry Pi:** MQTT broker + Arduino interface
+- **Backend Server:** WebSocket server + Arduino interface
 - **MacBook Pro:** AI logic, dashboard, voice control
 - **Arduino:** Hardware control (servos, sensors)
 
@@ -85,7 +85,7 @@ helios-ai/
 
 ## 🎯 Hackathon Day Checklist
 
-- [ ] Update `MQTT_BROKER_HOST` with Pi's IP
+- [ ] Update `WEBSOCKET_SERVER_URL` with backend server URL
 - [ ] Update `WEATHER_LAT`/`WEATHER_LON` with venue location
 - [ ] Test all services with `mock_data` mode
 - [ ] Verify `.env` is NOT in git
@@ -96,7 +96,7 @@ helios-ai/
 ## 📞 Usage Example
 
 ```python
-from config.config import Config, Topics
+from config.config import Config, Events
 
 # Load configuration (secrets loaded automatically)
 print(Config.get_safe_config_string())  # Safe to display
@@ -104,11 +104,14 @@ print(Config.get_safe_config_string())  # Safe to display
 # Use API key in code (but never log it!)
 api_key = Config.OPENWEATHER_API_KEY
 
-# Use MQTT topics
-import paho.mqtt.client as mqtt
-client = mqtt.Client()
-client.connect(Config.MQTT_BROKER_HOST, Config.MQTT_BROKER_PORT)
-client.subscribe(Topics.SENSORS_RAW)
+# Use WebSocket events
+import socketio
+sio = socketio.Client()
+sio.connect(Config.WEBSOCKET_SERVER_URL)
+
+@sio.on(Events.SENSORS_RAW)
+def on_sensors(data):
+    print(f"Sensor data: {data}")
 ```
 
 ## 🧪 Testing
@@ -116,9 +119,6 @@ client.subscribe(Topics.SENSORS_RAW)
 ```bash
 # Test configuration loading
 python config/config.py
-
-# Test MQTT connection (when Pi is ready)
-python tests/test_mqtt_connection.py
 
 # Run dashboard in mock mode
 MOCK_DATA_MODE=True python dashboard/dashboard.py

@@ -7,7 +7,7 @@ voice input and output.
 """
 from google.adk.agents.llm_agent import Agent
 from google.adk.tools import tool
-import paho.mqtt.client as mqtt
+import socketio
 import json
 import os
 from datetime import datetime
@@ -16,12 +16,11 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# MQTT configuration
-MQTT_BROKER_HOST = os.getenv('MQTT_BROKER_HOST', 'localhost')
-MQTT_BROKER_PORT = int(os.getenv('MQTT_BROKER_PORT', 1883))
+# WebSocket configuration
+WEBSOCKET_SERVER_URL = os.getenv('WEBSOCKET_SERVER_URL', 'ws://localhost:5000')
 
-# Global MQTT client (will be initialized when needed)
-mqtt_client = None
+# Global WebSocket client (will be initialized when needed)
+sio = None
 latest_data = {
     'sensors': {},
     'status': {},
@@ -31,51 +30,56 @@ latest_data = {
 }
 
 
-def init_mqtt():
-    """Initialize MQTT client and subscribe to topics"""
-    global mqtt_client
+def init_websocket():
+    """Initialize WebSocket client and connect to server"""
+    global sio
 
-    if mqtt_client is not None:
-        return mqtt_client
+    if sio is not None:
+        return sio
 
-    def on_connect(client, userdata, flags, rc, properties=None):
-        print(f"Connected to MQTT broker: {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
-        # Subscribe to all Helios topics
-        client.subscribe("helios/sensors/raw")
-        client.subscribe("helios/status")
-        client.subscribe("helios/ai/performance_delta")
-        client.subscribe("helios/impact")
-        client.subscribe("helios/safety")
+    sio = socketio.Client()
 
-    def on_message(client, userdata, msg):
-        """Store latest messages for each topic"""
+    @sio.on('connect')
+    def on_connect():
+        print(f"Connec
+              ted to WebSocket server: {WEBSOCKET_SERVER_URL}")
+
+    @sio.on('sensors_raw')
+    def on_sensors_raw(data):
+        """Store latest sensor data"""
         global latest_data
-        try:
-            payload = json.loads(msg.payload.decode())
-            if msg.topic == "helios/sensors/raw":
-                latest_data['sensors'] = payload
-            elif msg.topic == "helios/status":
-                latest_data['status'] = payload
-            elif msg.topic == "helios/ai/performance_delta":
-                latest_data['performance_delta'] = payload
-            elif msg.topic == "helios/impact":
-                latest_data['impact'] = payload
-            elif msg.topic == "helios/safety":
-                latest_data['safety'] = payload
-        except json.JSONDecodeError:
-            pass
+        latest_data['sensors'] = data
 
-    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    mqtt_client.on_connect = on_connect
-    mqtt_client.on_message = on_message
+    @sio.on('status')
+    def on_status(data):
+        """Store latest status data"""
+        global latest_data
+        latest_data['status'] = data
+
+    @sio.on('ai_performance_delta')
+    def on_performance_delta(data):
+        """Store latest performance delta data"""
+        global latest_data
+        latest_data['performance_delta'] = data
+
+    @sio.on('impact')
+    def on_impact(data):
+        """Store latest impact data"""
+        global latest_data
+        latest_data['impact'] = data
+
+    @sio.on('safety')
+    def on_safety(data):
+        """Store latest safety data"""
+        global latest_data
+        latest_data['safety'] = data
 
     try:
-        mqtt_client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
-        mqtt_client.loop_start()
+        sio.connect(WEBSOCKET_SERVER_URL)
     except Exception as e:
-        print(f"Failed to connect to MQTT broker: {e}")
+        print(f"Failed to connect to WebSocket server: {e}")
 
-    return mqtt_client
+    return sio
 
 
 @tool
@@ -86,7 +90,7 @@ def get_status() -> dict:
     Returns:
         dict: Current system status including mode, angles, and sun position
     """
-    init_mqtt()
+    init_websocket()
 
     if not latest_data['status']:
         return {"error": "No status data available yet"}
@@ -117,13 +121,13 @@ def switch_mode(mode: str) -> str:
     Returns:
         str: Confirmation message
     """
-    init_mqtt()
+    init_websocket()
 
     if mode not in ["Reactive", "Predictive"]:
         return f"Invalid mode '{mode}'. Please choose 'Reactive' or 'Predictive'."
 
     command = {"mode": mode}
-    mqtt_client.publish("helios/command/mode", json.dumps(command))
+    sio.emit("command_mode", command)
 
     return f"Switched to {mode} mode. The system will now use {'sensor-based tracking' if mode == 'Reactive' else 'astronomical calculations'}."
 
@@ -140,7 +144,7 @@ def move_to(pan_angle_deg: float, tilt_angle_deg: float) -> str:
     Returns:
         str: Confirmation message
     """
-    init_mqtt()
+    init_websocket()
 
     # Validate angles
     if not (0 <= pan_angle_deg <= 180):
@@ -153,7 +157,7 @@ def move_to(pan_angle_deg: float, tilt_angle_deg: float) -> str:
         "pan_angle_deg": pan_angle_deg,
         "tilt_angle_deg": tilt_angle_deg
     }
-    mqtt_client.publish("helios/command/position", json.dumps(command))
+    sio.emit("command_position", command)
 
     return f"Moving tracker to pan={pan_angle_deg}°, tilt={tilt_angle_deg}°"
 
@@ -169,7 +173,7 @@ def explain_delta(window_s: int = 600) -> str:
     Returns:
         str: Explanation of which mode performed better and by how much
     """
-    init_mqtt()
+    init_websocket()
 
     if not latest_data['performance_delta']:
         return "No A/B comparison data available yet. The digital twin needs more time to gather samples."
@@ -201,7 +205,7 @@ def get_impact(window_s: int = 3600) -> dict:
     Returns:
         dict: Energy generated, cost saved, and CO2 avoided
     """
-    init_mqtt()
+    init_websocket()
 
     if not latest_data['impact']:
         return {"error": "No impact data available yet"}
@@ -224,7 +228,7 @@ def get_safety_status() -> dict:
     Returns:
         dict: Safety status including servo health and temperature
     """
-    init_mqtt()
+    init_websocket()
 
     if not latest_data['safety']:
         return {"error": "No safety data available yet"}
