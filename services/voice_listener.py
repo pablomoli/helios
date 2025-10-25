@@ -1,0 +1,78 @@
+# Install 
+# pip install SpeechRecognition
+# pip install pvporcupine pvrecorder
+# brew install portaudio
+# python3 -m pip install PyAudio
+
+import pvporcupine
+import pvrecorder
+
+import speech_recognition as sr
+import requests # To call your Flask/ADK API
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path)
+
+ACCESS_KEY = os.getenv("PORCUPINE_API_KEY")
+# MODEL_PATH = "/path/to/your/custom_wake_word.ppn" 
+# ADK_API_URL = "http://127.0.0.1:5000/adk/query" 
+
+def run_voice_assistant():
+    # 1. Initialize Porcupine and Recorder
+    # print(pvporcupine.KEYWORDS)
+    # {'americano', 'computer', 'hey barista', 'terminator', 'pico clock', 'grapefruit', 'porcupine', 'grasshopper', 'hey siri', 'picovoice', 'alexa', 'ok google', 'jarvis', 'blueberry', 'hey google', 'bumblebee'}
+
+    ppn = pvporcupine.create(
+            access_key=ACCESS_KEY,
+            keywords=['computer'] 
+        )
+    recorder = pvrecorder.PvRecorder(frame_length=ppn.frame_length)
+    r = sr.Recognizer()
+    print(pvporcupine.KEYWORDS)
+    
+    print(f"Listening for wake word...")
+    recorder.start()
+
+    while True:
+        # 2. Process Audio Frames
+        pcm = recorder.read()
+        keyword_index = ppn.process(pcm)
+
+        # 3. Wake Word Detected
+        if keyword_index >= 0:
+            print("Wake word detected! Listening for command...")
+            recorder.stop() 
+            
+            # Speech to Text
+            try:
+                # Use the default mic
+                mic_index = 0  # 'MacBook Air Mic
+                with sr.Microphone(device_index=mic_index) as source:
+                    print(sr.Microphone.list_microphone_names())
+                    r.adjust_for_ambient_noise(source)
+                    audio = r.listen(source, timeout=5) # 
+                
+                # Use Google's online STT for transcription
+                command_text = r.recognize_google(audio)
+                print(f"Command transcribed: {command_text}")
+                
+                # 4. Send Command to ADK Agent/Flask API
+                response = requests.post(ADK_API_URL, json={"query": command_text})
+                print(f"ADK Response Status: {response.status_code}")
+
+            except sr.WaitTimeoutError:
+                print("No command received.")
+            except sr.UnknownValueError:
+                print("Could not understand audio.")
+            except Exception as e:
+                print(f"Error during command processing or API call: {e}")
+            
+            print("Restarting wake word listening...")
+            recorder.start() # Restart Porcupine listening
+
+# Call the function to run the assistant
+if __name__ == '__main__':
+    run_voice_assistant()
