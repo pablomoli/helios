@@ -6,6 +6,9 @@
 *.pem
 config/secrets.py
 
+# AI documentation (keep local only)
+CLAUDE.md
+
 # Python
 __pycache__/
 *.py[cod]

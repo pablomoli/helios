@@ -1,4 +1,5 @@
 // Sky Map Component with Live Cloud Coverage
+// SECURITY: Uses backend proxy endpoints - no API keys exposed to frontend
 class SkyMap {
     constructor() {
         this.cloudValue = document.getElementById('cloudValue');
@@ -6,15 +7,16 @@ class SkyMap {
         this.map = null;
         this.cloudLayer = null;
         this.marker = null;
-        this.apiKey = null;
         this.userLat = null;
         this.userLon = null;
+        this.defaultLat = null;
+        this.defaultLon = null;
 
         this.init();
     }
 
     async init() {
-        // Get API key from backend
+        // Get default location from backend
         await this.fetchConfig();
 
         // Get user location
@@ -28,11 +30,13 @@ class SkyMap {
         try {
             const response = await fetch('/api/config');
             const config = await response.json();
-            this.apiKey = config.openweather_api_key;
             this.defaultLat = config.default_lat;
             this.defaultLon = config.default_lon;
         } catch (error) {
             console.error('[SkyMap] Failed to fetch config:', error);
+            // Fallback to San Francisco
+            this.defaultLat = 37.7749;
+            this.defaultLon = -122.4194;
         }
     }
 
@@ -73,29 +77,46 @@ class SkyMap {
             return;
         }
 
-        try {
-            // Reverse geocoding to get location name
-            const response = await fetch(
-                `https://api.openweathermap.org/geo/1.0/reverse?lat=${lat}&lon=${lon}&limit=1&appid=${this.apiKey}`
-            );
-            const data = await response.json();
+        // Show loading state
+        locationText.textContent = 'Loading location...';
 
-            if (data && data.length > 0) {
-                const location = data[0];
-                const cityName = location.name;
-                const state = location.state ? `, ${location.state}` : '';
-                locationText.textContent = `${cityName}${state}`;
-            } else {
-                locationText.textContent = `${lat.toFixed(2)}°, ${lon.toFixed(2)}°`;
+        try {
+            // Reverse geocoding via secure backend proxy
+            const response = await fetch(`/api/geocode/reverse?lat=${lat}&lon=${lon}`);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
+
+            const result = await response.json();
+            console.log('[SkyMap] Geocoding result:', result);
+
+            if (result.source && result.data) {
+                // Backend proxy returned data successfully
+                if (result.data.name) {
+                    const location = result.data;
+                    const cityName = location.name;
+                    const state = location.state ? `, ${location.state}` : '';
+                    const country = location.country ? ` ${location.country}` : '';
+                    locationText.textContent = `${cityName}${state}${country}`;
+                    console.log(`[SkyMap] Location set to: ${cityName}${state}${country}`);
+                    return;
+                }
+            }
+
+            // Fallback to coordinates if no location name found
+            console.warn('[SkyMap] No location name found, showing coordinates');
+            locationText.textContent = `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
+
         } catch (error) {
             console.error('[SkyMap] Failed to get location name:', error);
-            locationText.textContent = `${lat.toFixed(2)}°, ${lon.toFixed(2)}°`;
+            // Fallback to coordinates on error
+            locationText.textContent = `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
         }
     }
 
     initializeMap() {
-        if (!this.userLat || !this.userLon || !this.apiKey) {
+        if (!this.userLat || !this.userLon) {
             console.error('[SkyMap] Missing required data for map initialization');
             return;
         }
@@ -108,16 +129,16 @@ class SkyMap {
             attributionControl: true
         });
 
-        // Add base tile layer (dark theme)
+        // Add base tile layer (dark theme) - No API key required
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
             subdomains: 'abcd',
             maxZoom: 19
         }).addTo(this.map);
 
-        // Add cloud coverage overlay from OpenWeatherMap
+        // Add cloud coverage overlay via secure backend proxy
         this.cloudLayer = L.tileLayer(
-            `https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=${this.apiKey}`,
+            '/api/tiles/clouds/{z}/{x}/{y}.png',
             {
                 attribution: 'Cloud data &copy; <a href="https://openweathermap.org">OpenWeatherMap</a>',
                 opacity: 0.7,
@@ -143,22 +164,24 @@ class SkyMap {
     update(data) {
         const cloudCover = data.cloud_cover_pct || 0;
         this.cloudValue.textContent = `${cloudCover}%`;
-
-        // Optionally refresh cloud layer every 10 minutes
-        // OpenWeatherMap updates cloud data periodically
     }
 
     refreshCloudLayer() {
         if (this.cloudLayer && this.map) {
+            // Remove old layer
             this.map.removeLayer(this.cloudLayer);
+
+            // Add fresh layer via backend proxy with cache buster
             this.cloudLayer = L.tileLayer(
-                `https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=${this.apiKey}&t=${Date.now()}`,
+                `/api/tiles/clouds/{z}/{x}/{y}.png?t=${Date.now()}`,
                 {
                     attribution: 'Cloud data &copy; <a href="https://openweathermap.org">OpenWeatherMap</a>',
                     opacity: 0.7,
                     maxZoom: 19
                 }
             ).addTo(this.map);
+
+            console.log('[SkyMap] Cloud layer refreshed');
         }
     }
 }

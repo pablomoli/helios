@@ -1,4 +1,4 @@
-// Analytics Component
+// Analytics Component with Smooth Animations
 class Analytics {
     constructor() {
         this.currentPower = document.getElementById('currentPower');
@@ -11,9 +11,15 @@ class Analytics {
         this.lastUpdateTime = Date.now();
     }
 
+    addFlashEffect(element) {
+        element.classList.add('value-update');
+        setTimeout(() => element.classList.remove('value-update'), 500);
+    }
+
     updateSensorData(data) {
         const power = data.panel_power_mW || 0;
         this.currentPower.textContent = `${power.toFixed(1)} mW`;
+        this.addFlashEffect(this.currentPower);
 
         const voltage = data.panel_voltage_V || 0;
         this.panelVoltage.textContent = `${voltage.toFixed(2)} V`;
@@ -28,11 +34,15 @@ class Analytics {
         this.lastUpdateTime = now;
 
         this.energyToday.textContent = `${this.accumulatedEnergy.toFixed(1)} mWh`;
+        this.addFlashEffect(this.energyToday);
     }
 
     updateStatusData(data) {
         const mode = data.mode || '--';
-        this.currentMode.textContent = mode;
+        if (this.currentMode.textContent !== mode) {
+            this.currentMode.textContent = mode;
+            this.addFlashEffect(this.currentMode);
+        }
 
         // Update sky map with cloud cover
         if (skyMap && data.cloud_cover_pct !== undefined) {

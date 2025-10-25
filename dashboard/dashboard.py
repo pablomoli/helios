@@ -2,20 +2,51 @@
 Flask Dashboard with WebSocket support for Helios AI
 Serves the web interface and streams real-time data
 """
-from flask import Flask, render_template
+from flask import Flask, render_template, request, jsonify, abort
 from flask_socketio import SocketIO, emit
 import time
 import sys
 from pathlib import Path
-from threading import Thread
+import os
+from threading import Thread, Lock
+import requests
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import Config, Topics
 from mock_data.data_generator import MockDataGenerator
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'helios_ai_secret_key_change_in_production'
-socketio = SocketIO(app, cors_allowed_origins="*")
+
+# SECRET_KEY handling: require environment variable in production; allow a
+# development fallback only when DEBUG_MODE is enabled. Fail loudly otherwise.
+secret_key = os.environ.get('SECRET_KEY')
+if not secret_key:
+    if Config.DEBUG_MODE:
+        # In debug mode use a clearly insecure fallback but log it so devs notice
+        print("[WARNING] SECRET_KEY not set; using insecure development fallback. Do not use in production.")
+        secret_key = 'helios_dev_insecure_secret'
+    else:
+        raise RuntimeError('SECRET_KEY environment variable not set. Aborting startup for security reasons.')
+
+app.config['SECRET_KEY'] = secret_key
+
+# Restrict allowed origins for Socket.IO. Read from environment variable
+# ALLOWED_ORIGINS as comma-separated list. In production this must be set.
+allowed_origins_env = os.environ.get('ALLOWED_ORIGINS', '')
+if allowed_origins_env:
+    cors_allowed_origins = [o.strip() for o in allowed_origins_env.split(',') if o.strip()]
+else:
+    # If not set, make a safe default for development only.
+    if Config.DEBUG_MODE:
+        cors_allowed_origins = [
+            f'http://localhost:{Config.DASHBOARD_PORT}',
+            'http://localhost:3000'
+        ]
+        print(f"[INFO] ALLOWED_ORIGINS not set; using development defaults: {cors_allowed_origins}")
+    else:
+        raise RuntimeError('ALLOWED_ORIGINS environment variable must be set in production to restrict Socket.IO origins.')
+
+socketio = SocketIO(app, cors_allowed_origins=cors_allowed_origins)
 
 # Mock data generator
 mock_generator = MockDataGenerator()
@@ -25,6 +56,17 @@ dashboard_state = {
     "mock_mode": Config.MOCK_DATA_MODE,
     "connected_clients": 0
 }
+
+# Lock to guard connected_clients increments/decrements
+connected_clients_lock = Lock()
+
+# Simple in-memory cache for weather responses: { cache_key: (timestamp, data) }
+weather_cache = {}
+
+# Simple rate limiter per-IP: { ip: (count, window_start) }
+rate_limiter = {}
+RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_MAX = 30     # max requests per window per IP
 
 
 @app.route('/')
@@ -36,10 +78,14 @@ def index():
 @app.route('/health')
 def health():
     """Health check endpoint"""
+    # Read connected_clients under lock to avoid race conditions
+    with connected_clients_lock:
+        clients = dashboard_state["connected_clients"]
+
     return {
         "status": "healthy",
         "mock_mode": dashboard_state["mock_mode"],
-        "connected_clients": dashboard_state["connected_clients"],
+        "connected_clients": clients,
         "timestamp": int(time.time())
     }
 
@@ -47,18 +93,221 @@ def health():
 @app.route('/api/config')
 def get_config():
     """Provide safe configuration to frontend"""
+    # Do NOT expose API keys to the frontend. Return only non-sensitive defaults.
     return {
-        "openweather_api_key": Config.OPENWEATHER_API_KEY,
         "default_lat": Config.WEATHER_LAT,
         "default_lon": Config.WEATHER_LON
     }
 
 
+@app.route('/api/weather')
+def proxy_weather():
+    """Proxy endpoint to fetch weather from OpenWeatherMap without exposing the API key.
+
+    Accepts either lat & lon (preferred) or city as query params.
+    Implements basic input validation, per-IP rate limiting, and a simple in-memory cache.
+    """
+    # Rate limiting per client IP
+    client_ip = request.remote_addr or 'unknown'
+    now = int(time.time())
+    window = RATE_LIMIT_WINDOW
+
+    entry = rate_limiter.get(client_ip)
+    if entry:
+        count, start = entry
+        if now - start < window:
+            if count >= RATE_LIMIT_MAX:
+                return jsonify({"error": "rate_limit_exceeded"}), 429
+            else:
+                rate_limiter[client_ip] = (count + 1, start)
+        else:
+            rate_limiter[client_ip] = (1, now)
+    else:
+        rate_limiter[client_ip] = (1, now)
+
+    # Validate and parse inputs
+    lat = request.args.get('lat')
+    lon = request.args.get('lon')
+    city = request.args.get('city')
+
+    if city:
+        city = city.strip()
+        if len(city) == 0 or len(city) > 100:
+            return jsonify({"error": "invalid_city"}), 400
+        cache_key = f"city:{city.lower()}"
+        params = {"q": city}
+    elif lat and lon:
+        try:
+            lat_f = float(lat)
+            lon_f = float(lon)
+        except ValueError:
+            return jsonify({"error": "invalid_latlon"}), 400
+
+        if not (-90.0 <= lat_f <= 90.0 and -180.0 <= lon_f <= 180.0):
+            return jsonify({"error": "latlon_out_of_range"}), 400
+
+        cache_key = f"ll:{lat_f:.6f},{lon_f:.6f}"
+        params = {"lat": lat_f, "lon": lon_f}
+    else:
+        return jsonify({"error": "missing_parameters"}), 400
+
+    # Check cache
+    cached = weather_cache.get(cache_key)
+    if cached:
+        ts, data = cached
+        if now - ts < Config.WEATHER_CACHE_TTL:
+            return jsonify({"source": "cache", "data": data})
+        else:
+            # expired
+            weather_cache.pop(cache_key, None)
+
+    # Ensure API key exists
+    if not Config.OPENWEATHER_API_KEY:
+        return jsonify({"error": "server_configuration_missing"}), 503
+
+    # Call OpenWeatherMap (server-side)
+    owm_url = 'https://api.openweathermap.org/data/2.5/weather'
+    query = {**params, 'appid': Config.OPENWEATHER_API_KEY, 'units': 'metric'}
+
+    try:
+        resp = requests.get(owm_url, params=query, timeout=5)
+    except requests.RequestException:
+        return jsonify({"error": "upstream_unreachable"}), 502
+
+    if resp.status_code != 200:
+        return jsonify({"error": "upstream_error", "status": resp.status_code}), resp.status_code
+
+    payload = resp.json()
+
+    # Reduce payload to only what's needed
+    reduced = {
+        'location': payload.get('name'),
+        'coords': payload.get('coord'),
+        'weather': payload.get('weather')[0].get('description') if payload.get('weather') else None,
+        'temp_c': payload.get('main', {}).get('temp'),
+        'humidity': payload.get('main', {}).get('humidity'),
+        'wind_m_s': payload.get('wind', {}).get('speed'),
+        'timestamp': payload.get('dt')
+    }
+
+    # Store in cache
+    weather_cache[cache_key] = (now, reduced)
+
+    return jsonify({"source": "api", "data": reduced})
+
+
+@app.route('/api/tiles/clouds/<int:z>/<int:x>/<int:y>.png')
+def proxy_cloud_tiles(z, x, y):
+    """Proxy endpoint for OpenWeatherMap cloud tile images.
+
+    Fetches cloud coverage tiles server-side to avoid exposing API key to frontend.
+    Tiles follow standard slippy map format: zoom/x/y
+    """
+    # Validate tile coordinates (reasonable bounds)
+    if not (0 <= z <= 19 and 0 <= x < 2**z and 0 <= y < 2**z):
+        abort(400)
+
+    # Ensure API key exists
+    if not Config.OPENWEATHER_API_KEY:
+        abort(503)
+
+    # Fetch tile from OpenWeatherMap
+    tile_url = f'https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png'
+    params = {'appid': Config.OPENWEATHER_API_KEY}
+
+    try:
+        resp = requests.get(tile_url, params=params, timeout=10)
+    except requests.RequestException:
+        abort(502)
+
+    if resp.status_code != 200:
+        abort(resp.status_code)
+
+    # Return the tile image with appropriate headers
+    return resp.content, 200, {
+        'Content-Type': 'image/png',
+        'Cache-Control': 'public, max-age=600'  # Cache tiles for 10 minutes
+    }
+
+
+@app.route('/api/geocode/reverse')
+def proxy_reverse_geocode():
+    """Proxy endpoint for reverse geocoding (coordinates to city name).
+
+    Converts lat/lon to city name without exposing API key to frontend.
+    """
+    lat = request.args.get('lat')
+    lon = request.args.get('lon')
+
+    if not lat or not lon:
+        return jsonify({"error": "missing_parameters"}), 400
+
+    try:
+        lat_f = float(lat)
+        lon_f = float(lon)
+    except ValueError:
+        return jsonify({"error": "invalid_latlon"}), 400
+
+    if not (-90.0 <= lat_f <= 90.0 and -180.0 <= lon_f <= 180.0):
+        return jsonify({"error": "latlon_out_of_range"}), 400
+
+    # Check cache
+    cache_key = f"geocode:{lat_f:.4f},{lon_f:.4f}"
+    now = int(time.time())
+    cached = weather_cache.get(cache_key)
+    if cached:
+        ts, data = cached
+        if now - ts < 3600:  # Cache geocoding for 1 hour
+            return jsonify({"source": "cache", "data": data})
+
+    # Ensure API key exists
+    if not Config.OPENWEATHER_API_KEY:
+        return jsonify({"error": "server_configuration_missing"}), 503
+
+    # Call OpenWeatherMap Geocoding API
+    geocode_url = 'https://api.openweathermap.org/geo/1.0/reverse'
+    params = {
+        'lat': lat_f,
+        'lon': lon_f,
+        'limit': 1,
+        'appid': Config.OPENWEATHER_API_KEY
+    }
+
+    try:
+        resp = requests.get(geocode_url, params=params, timeout=5)
+    except requests.RequestException:
+        return jsonify({"error": "upstream_unreachable"}), 502
+
+    if resp.status_code != 200:
+        return jsonify({"error": "upstream_error", "status": resp.status_code}), resp.status_code
+
+    payload = resp.json()
+
+    if payload and len(payload) > 0:
+        location = payload[0]
+        result = {
+            'name': location.get('name'),
+            'state': location.get('state'),
+            'country': location.get('country')
+        }
+    else:
+        result = None
+
+    # Store in cache
+    weather_cache[cache_key] = (now, result)
+
+    return jsonify({"source": "api", "data": result})
+
+
 @socketio.on('connect')
 def handle_connect():
     """Handle client connection"""
-    dashboard_state["connected_clients"] += 1
-    print(f"[Dashboard] Client connected (total: {dashboard_state['connected_clients']})")
+    # Update connected client count atomically
+    with connected_clients_lock:
+        dashboard_state["connected_clients"] += 1
+        current = dashboard_state["connected_clients"]
+
+    print(f"[Dashboard] Client connected (total: {current})")
 
     # Send initial connection confirmation
     emit('connection_status', {
@@ -71,8 +320,12 @@ def handle_connect():
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle client disconnection"""
-    dashboard_state["connected_clients"] -= 1
-    print(f"[Dashboard] Client disconnected (total: {dashboard_state['connected_clients']})")
+    with connected_clients_lock:
+        # Avoid negative counts in case of unexpected disconnect races
+        dashboard_state["connected_clients"] = max(0, dashboard_state["connected_clients"] - 1)
+        current = dashboard_state["connected_clients"]
+
+    print(f"[Dashboard] Client disconnected (total: {current})")
 
 
 @socketio.on('request_data')
@@ -102,8 +355,11 @@ def broadcast_data():
 
     while True:
         time.sleep(1)  # Send updates every second
+        # Read connected_clients under lock
+        with connected_clients_lock:
+            clients = dashboard_state["connected_clients"]
 
-        if dashboard_state["connected_clients"] > 0:
+        if clients > 0:
             # Broadcast all data types
             socketio.emit('sensor_data', mock_generator.get_sensor_data())
             socketio.emit('status_data', mock_generator.get_status())
