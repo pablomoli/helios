@@ -41,8 +41,7 @@ def init_websocket():
 
     @sio.on('connect')
     def on_connect():
-        print(f"Connec
-              ted to WebSocket server: {WEBSOCKET_SERVER_URL}")
+        print(f"Connected to WebSocket server: {WEBSOCKET_SERVER_URL}")
 
     @sio.on('sensors_raw')
     def on_sensors_raw(data):
@@ -139,7 +138,7 @@ def move_to(pan_angle_deg: float, tilt_angle_deg: float) -> str:
 
     Args:
         pan_angle_deg: Horizontal angle in degrees (0-180)
-        tilt_angle_deg: Vertical angle in degrees (0-90)
+        tilt_angle_deg: Vertical angle in degrees (0-180)
 
     Returns:
         str: Confirmation message
@@ -150,8 +149,8 @@ def move_to(pan_angle_deg: float, tilt_angle_deg: float) -> str:
     if not (0 <= pan_angle_deg <= 180):
         return "Pan angle must be between 0 and 180 degrees."
 
-    if not (0 <= tilt_angle_deg <= 90):
-        return "Tilt angle must be between 0 and 90 degrees."
+    if not (0 <= tilt_angle_deg <= 180):
+        return "Tilt angle must be between 0 and 180 degrees."
 
     command = {
         "pan_angle_deg": pan_angle_deg,
@@ -197,26 +196,35 @@ def explain_delta(window_s: int = 600) -> str:
 @tool
 def get_impact(window_s: int = 3600) -> dict:
     """
-    Get environmental and cost impact metrics.
+    Get environmental and cost impact metrics based on energy saved.
 
     Args:
         window_s: Time window in seconds (default 3600 = 1 hour)
 
     Returns:
-        dict: Energy generated, cost saved, and CO2 avoided
+        dict: Energy saved, cost saved, and CO2 avoided
     """
     init_websocket()
 
     if not latest_data['impact']:
-        return {"error": "No impact data available yet"}
+        return {"error": "No impact data available yet. Waiting for Arduino data..."}
 
     impact = latest_data['impact']
 
+    # Energy saved comes directly from Arduino
+    energy_saved_kwh = impact.get('energy_saved_kWh', 0)
+
+    # Calculate cost savings (assuming $0.15 per kWh average US residential rate)
+    usd_saved = energy_saved_kwh * 0.15
+
+    # Calculate CO2 avoided (assuming 500g CO2 per kWh average US grid)
+    co2_avoided_g = energy_saved_kwh * 500
+
     return {
-        "energy_kwh": impact.get('energy_kWh', 0),
-        "usd_saved": impact.get('usd_saved', 0),
-        "co2_avoided_g": impact.get('co2_g', 0),
-        "message": f"Generated {impact.get('energy_kWh', 0)} kWh, saved ${impact.get('usd_saved', 0):.2f}, and avoided {impact.get('co2_g', 0)}g of CO2 emissions"
+        "energy_saved_kwh": energy_saved_kwh,
+        "usd_saved": round(usd_saved, 4),
+        "co2_avoided_g": round(co2_avoided_g, 2),
+        "message": f"You've saved {energy_saved_kwh:.4f} kWh of energy, which equals ${usd_saved:.2f} in electricity costs and avoided {co2_avoided_g:.1f}g of CO2 emissions. Great work!"
     }
 
 
@@ -243,18 +251,24 @@ def get_safety_status() -> dict:
     }
 
 
-# Create the root agent with audio dialog model
+# Create the root agent with audio output capability
+# Using gemini-2.0-flash-exp with TTS for wake word compatibility
 root_agent = Agent(
-    model='gemini-2.5-flash-native-audio-dialog',
+    model='gemini-2.0-flash-exp',
     name='helios_agent',
     description='Voice-controlled assistant for the Helios AI solar tracking system',
     instruction="""
     You are Helios, an intelligent voice assistant for a solar tracking system.
 
+    IMPORTANT: You are activated by the wake word "computer". After the wake word,
+    users will ask a single question. Answer their question concisely and completely,
+    then STOP. Do NOT continue the conversation or ask follow-up questions unless
+    the user explicitly asks another question after saying "computer" again.
+
     Your personality:
     - Friendly and enthusiastic about solar energy
     - Technical but accessible - you explain things clearly
-    - Proactive about showing the value of AI-driven tracking
+    - Direct and to-the-point in responses
 
     Your capabilities:
     - Check system status and current power generation
@@ -264,17 +278,23 @@ root_agent = Agent(
     - Report environmental impact (energy, cost savings, CO2 reduction)
     - Monitor system safety
 
-    When users ask "Hey Helios" or greet you:
-    - Respond warmly and offer to help with the solar tracker
-    - You can proactively mention current power generation if available
+    Response style:
+    - Keep responses SHORT and CONCISE (1-3 sentences maximum)
+    - Answer the specific question asked
+    - Use real data from your tools when available
+    - Do NOT ask "Is there anything else?" or similar follow-ups
+    - Do NOT engage in conversational chitchat
+    - Simply answer the question and end your response
 
     When explaining performance:
     - Use the digital twin data to prove decisions with real numbers
-    - Celebrate when predictive mode is winning
-    - Be curious and analytical when reactive mode performs better
+    - State facts clearly and concisely
+    - Include specific metrics (power in mW, percentages, etc.)
 
-    Keep responses concise for voice interaction - aim for 2-3 sentences unless
-    the user asks for details.
+    Examples of good responses:
+    - "The system is currently in Predictive mode, generating 730 milliwatts at 112 degrees pan and 45 degrees tilt."
+    - "Switching to Reactive mode now. The tracker will use sensor feedback to find the sun."
+    - "Predictive mode is winning by 11 percent, producing 730 milliwatts compared to 656 in Reactive mode."
     """,
     tools=[
         get_status,
