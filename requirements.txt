@@ -16,6 +16,9 @@ pytz==2023.3
 # HTTP Requests (Weather API)
 requests==2.31.0
 
+# Caching utilities (TTL and bounded caches)
+cachetools==5.3.2
+
 # Google ADK (Voice Agent)
 google-adk==0.1.0
 

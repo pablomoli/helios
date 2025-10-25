@@ -12,6 +12,24 @@ class ImpactPanel {
     }
 
     animateValue(element, start, end, duration, decimals, prefix = '', suffix = '') {
+        if (!element) return;  // Guard against missing elements
+
+        // Cancel any existing animation for this element
+        if (element.__animateState) {
+            if (element.__animateState.rafId) {
+                cancelAnimationFrame(element.__animateState.rafId);
+            }
+            if (element.__animateState.flashTimeoutId) {
+                clearTimeout(element.__animateState.flashTimeoutId);
+            }
+        }
+
+        // Initialize animation state object on the element
+        element.__animateState = {
+            rafId: null,
+            flashTimeoutId: null
+        };
+
         const startTime = performance.now();
 
         const animate = (currentTime) => {
@@ -25,16 +43,34 @@ class ImpactPanel {
             const current = start + (end - start) * easedProgress;
             element.textContent = `${prefix}${current.toFixed(decimals)}${suffix}`;
 
-            // Add flash effect
-            element.classList.add('value-update');
-            setTimeout(() => element.classList.remove('value-update'), 500);
+            // Add flash effect only once at the start
+            if (elapsed < 50 && !element.classList.contains('value-update')) {
+                element.classList.add('value-update');
+                
+                // Clear any existing flash timeout and set new one
+                if (element.__animateState.flashTimeoutId) {
+                    clearTimeout(element.__animateState.flashTimeoutId);
+                }
+                
+                element.__animateState.flashTimeoutId = setTimeout(() => {
+                    element.classList.remove('value-update');
+                    if (element.__animateState) {
+                        element.__animateState.flashTimeoutId = null;
+                    }
+                }, 500);
+            }
 
             if (progress < 1) {
-                requestAnimationFrame(animate);
+                element.__animateState.rafId = requestAnimationFrame(animate);
+            } else {
+                // Animation complete, clear the RAF id
+                if (element.__animateState) {
+                    element.__animateState.rafId = null;
+                }
             }
         };
 
-        requestAnimationFrame(animate);
+        element.__animateState.rafId = requestAnimationFrame(animate);
     }
 
     update(data) {

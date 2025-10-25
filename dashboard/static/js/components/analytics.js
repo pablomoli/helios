@@ -12,6 +12,7 @@ class Analytics {
     }
 
     addFlashEffect(element) {
+        if (!element) return;  // Guard against missing DOM nodes
         element.classList.add('value-update');
         setTimeout(() => element.classList.remove('value-update'), 500);
     }

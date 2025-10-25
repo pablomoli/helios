@@ -801,3 +801,59 @@ body::after {
 .voice-log::-webkit-scrollbar-thumb:hover {
     background: var(--accent-solar);
 }
+
+/* Accessibility: Disable animations for users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    /* Disable animated gradient background */
+    body::before {
+        animation: none;
+        background: linear-gradient(135deg,
+            #0a0e1a 0%,
+            #1a1f35 50%,
+            #0a0e1a 100%
+        );
+        background-size: 100% 100%;
+        background-position: 0% 50%;
+    }
+
+    /* Disable mesh overlay animation */
+    body::after {
+        animation: none;
+    }
+
+    /* Disable all keyframe animations */
+    .status-dot {
+        animation: none !important;
+    }
+
+    .skeleton {
+        animation: none !important;
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    .value-update {
+        animation: none !important;
+    }
+
+    .safety-alert {
+        animation: none !important;
+    }
+
+    /* Disable transitions for smoother experience */
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    /* Keep critical transitions but make them instant */
+    .metric-value,
+    .impact-value,
+    .cloud-value,
+    .status-icon {
+        transition: none;
+    }
+}

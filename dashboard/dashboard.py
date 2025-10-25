@@ -10,6 +10,7 @@ from pathlib import Path
 import os
 from threading import Thread, Lock
 import requests
+from cachetools import TTLCache, LRUCache
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import Config, Topics
@@ -60,11 +61,17 @@ dashboard_state = {
 # Lock to guard connected_clients increments/decrements
 connected_clients_lock = Lock()
 
-# Simple in-memory cache for weather responses: { cache_key: (timestamp, data) }
-weather_cache = {}
+# Lock to guard weather_cache and rate_limiter accesses
+cache_lock = Lock()
 
-# Simple rate limiter per-IP: { ip: (count, window_start) }
-rate_limiter = {}
+# Bounded TTL cache for weather responses with automatic expiration
+# maxsize=500 entries, TTL from config (default 900s = 15 min)
+weather_cache = TTLCache(maxsize=500, ttl=Config.WEATHER_CACHE_TTL)
+
+# Bounded LRU cache for rate limiter per-IP: { ip: (count, window_start) }
+# maxsize=1000 IPs to prevent unbounded growth
+rate_limiter = LRUCache(maxsize=1000)
+
 RATE_LIMIT_WINDOW = 60  # seconds
 RATE_LIMIT_MAX = 30     # max requests per window per IP
 
@@ -112,18 +119,19 @@ def proxy_weather():
     now = int(time.time())
     window = RATE_LIMIT_WINDOW
 
-    entry = rate_limiter.get(client_ip)
-    if entry:
-        count, start = entry
-        if now - start < window:
-            if count >= RATE_LIMIT_MAX:
-                return jsonify({"error": "rate_limit_exceeded"}), 429
+    with cache_lock:
+        entry = rate_limiter.get(client_ip)
+        if entry:
+            count, start = entry
+            if now - start < window:
+                if count >= RATE_LIMIT_MAX:
+                    return jsonify({"error": "rate_limit_exceeded"}), 429
+                else:
+                    rate_limiter[client_ip] = (count + 1, start)
             else:
-                rate_limiter[client_ip] = (count + 1, start)
+                rate_limiter[client_ip] = (1, now)
         else:
             rate_limiter[client_ip] = (1, now)
-    else:
-        rate_limiter[client_ip] = (1, now)
 
     # Validate and parse inputs
     lat = request.args.get('lat')
@@ -151,15 +159,13 @@ def proxy_weather():
     else:
         return jsonify({"error": "missing_parameters"}), 400
 
-    # Check cache
-    cached = weather_cache.get(cache_key)
+    # Check cache (TTLCache handles expiration automatically)
+    with cache_lock:
+        cached = weather_cache.get(cache_key)
+    
     if cached:
-        ts, data = cached
-        if now - ts < Config.WEATHER_CACHE_TTL:
-            return jsonify({"source": "cache", "data": data})
-        else:
-            # expired
-            weather_cache.pop(cache_key, None)
+        # TTLCache already validated TTL, so this is fresh
+        return jsonify({"source": "cache", "data": cached})
 
     # Ensure API key exists
     if not Config.OPENWEATHER_API_KEY:
@@ -190,8 +196,9 @@ def proxy_weather():
         'timestamp': payload.get('dt')
     }
 
-    # Store in cache
-    weather_cache[cache_key] = (now, reduced)
+    # Store in cache (TTLCache handles expiration automatically)
+    with cache_lock:
+        weather_cache[cache_key] = reduced
 
     return jsonify({"source": "api", "data": reduced})
 
@@ -251,14 +258,13 @@ def proxy_reverse_geocode():
     if not (-90.0 <= lat_f <= 90.0 and -180.0 <= lon_f <= 180.0):
         return jsonify({"error": "latlon_out_of_range"}), 400
 
-    # Check cache
+    # Check cache (TTLCache handles expiration automatically)
     cache_key = f"geocode:{lat_f:.4f},{lon_f:.4f}"
-    now = int(time.time())
-    cached = weather_cache.get(cache_key)
+    with cache_lock:
+        cached = weather_cache.get(cache_key)
+    
     if cached:
-        ts, data = cached
-        if now - ts < 3600:  # Cache geocoding for 1 hour
-            return jsonify({"source": "cache", "data": data})
+        return jsonify({"source": "cache", "data": cached})
 
     # Ensure API key exists
     if not Config.OPENWEATHER_API_KEY:
@@ -293,8 +299,9 @@ def proxy_reverse_geocode():
     else:
         result = None
 
-    # Store in cache
-    weather_cache[cache_key] = (now, result)
+    # Store in cache (TTLCache handles expiration automatically)
+    with cache_lock:
+        weather_cache[cache_key] = result
 
     return jsonify({"source": "api", "data": result})
 
