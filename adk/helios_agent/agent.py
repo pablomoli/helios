@@ -1,0 +1,283 @@
+"""
+Helios AI - Voice-Controlled Solar Tracker Agent
+
+This agent provides voice interaction with the Helios solar tracking system.
+It uses Google's gemini-2.5-flash-native-audio-dialog model for natural
+voice input and output.
+"""
+from google.adk.agents.llm_agent import Agent
+from google.adk.tools import tool
+import paho.mqtt.client as mqtt
+import json
+import os
+from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# MQTT configuration
+MQTT_BROKER_HOST = os.getenv('MQTT_BROKER_HOST', 'localhost')
+MQTT_BROKER_PORT = int(os.getenv('MQTT_BROKER_PORT', 1883))
+
+# Global MQTT client (will be initialized when needed)
+mqtt_client = None
+latest_data = {
+    'sensors': {},
+    'status': {},
+    'performance_delta': {},
+    'impact': {},
+    'safety': {}
+}
+
+
+def init_mqtt():
+    """Initialize MQTT client and subscribe to topics"""
+    global mqtt_client
+
+    if mqtt_client is not None:
+        return mqtt_client
+
+    def on_connect(client, userdata, flags, rc, properties=None):
+        print(f"Connected to MQTT broker: {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
+        # Subscribe to all Helios topics
+        client.subscribe("helios/sensors/raw")
+        client.subscribe("helios/status")
+        client.subscribe("helios/ai/performance_delta")
+        client.subscribe("helios/impact")
+        client.subscribe("helios/safety")
+
+    def on_message(client, userdata, msg):
+        """Store latest messages for each topic"""
+        global latest_data
+        try:
+            payload = json.loads(msg.payload.decode())
+            if msg.topic == "helios/sensors/raw":
+                latest_data['sensors'] = payload
+            elif msg.topic == "helios/status":
+                latest_data['status'] = payload
+            elif msg.topic == "helios/ai/performance_delta":
+                latest_data['performance_delta'] = payload
+            elif msg.topic == "helios/impact":
+                latest_data['impact'] = payload
+            elif msg.topic == "helios/safety":
+                latest_data['safety'] = payload
+        except json.JSONDecodeError:
+            pass
+
+    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    mqtt_client.on_connect = on_connect
+    mqtt_client.on_message = on_message
+
+    try:
+        mqtt_client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
+        mqtt_client.loop_start()
+    except Exception as e:
+        print(f"Failed to connect to MQTT broker: {e}")
+
+    return mqtt_client
+
+
+@tool
+def get_status() -> dict:
+    """
+    Get the current status of the Helios solar tracker.
+
+    Returns:
+        dict: Current system status including mode, angles, and sun position
+    """
+    init_mqtt()
+
+    if not latest_data['status']:
+        return {"error": "No status data available yet"}
+
+    status = latest_data['status']
+    sensors = latest_data['sensors']
+
+    return {
+        "mode": status.get('mode', 'Unknown'),
+        "pan_angle": status.get('pan_angle_deg', 0),
+        "tilt_angle": status.get('tilt_angle_deg', 0),
+        "sun_azimuth": status.get('sun_azimuth_deg', 0),
+        "sun_elevation": status.get('sun_elevation_deg', 0),
+        "cloud_cover": status.get('cloud_cover_pct', 0),
+        "current_power_mw": sensors.get('panel_power_mW', 0),
+        "timestamp": status.get('timestamp', 0)
+    }
+
+
+@tool
+def switch_mode(mode: str) -> str:
+    """
+    Switch the tracking mode between Reactive and Predictive.
+
+    Args:
+        mode: Either "Reactive" or "Predictive"
+
+    Returns:
+        str: Confirmation message
+    """
+    init_mqtt()
+
+    if mode not in ["Reactive", "Predictive"]:
+        return f"Invalid mode '{mode}'. Please choose 'Reactive' or 'Predictive'."
+
+    command = {"mode": mode}
+    mqtt_client.publish("helios/command/mode", json.dumps(command))
+
+    return f"Switched to {mode} mode. The system will now use {'sensor-based tracking' if mode == 'Reactive' else 'astronomical calculations'}."
+
+
+@tool
+def move_to(pan_angle_deg: float, tilt_angle_deg: float) -> str:
+    """
+    Manually move the tracker to a specific position.
+
+    Args:
+        pan_angle_deg: Horizontal angle in degrees (0-180)
+        tilt_angle_deg: Vertical angle in degrees (0-90)
+
+    Returns:
+        str: Confirmation message
+    """
+    init_mqtt()
+
+    # Validate angles
+    if not (0 <= pan_angle_deg <= 180):
+        return "Pan angle must be between 0 and 180 degrees."
+
+    if not (0 <= tilt_angle_deg <= 90):
+        return "Tilt angle must be between 0 and 90 degrees."
+
+    command = {
+        "pan_angle_deg": pan_angle_deg,
+        "tilt_angle_deg": tilt_angle_deg
+    }
+    mqtt_client.publish("helios/command/position", json.dumps(command))
+
+    return f"Moving tracker to pan={pan_angle_deg}°, tilt={tilt_angle_deg}°"
+
+
+@tool
+def explain_delta(window_s: int = 600) -> str:
+    """
+    Explain the performance difference between Predictive and Reactive modes.
+
+    Args:
+        window_s: Time window in seconds to analyze (default 600 = 10 minutes)
+
+    Returns:
+        str: Explanation of which mode performed better and by how much
+    """
+    init_mqtt()
+
+    if not latest_data['performance_delta']:
+        return "No A/B comparison data available yet. The digital twin needs more time to gather samples."
+
+    delta = latest_data['performance_delta']
+    actual_power = delta.get('actual_strategy_power_mW', 0)
+    shadow_power = delta.get('shadow_strategy_power_mW', 0)
+    delta_pct = delta.get('delta_pct', 0)
+
+    current_mode = latest_data['status'].get('mode', 'Unknown')
+    other_mode = 'Reactive' if current_mode == 'Predictive' else 'Predictive'
+
+    if delta_pct > 0:
+        return f"{current_mode} mode is winning! It's producing {delta_pct:.1f}% more power ({actual_power:.1f} mW) compared to {other_mode} mode ({shadow_power:.1f} mW). The astronomical tracking is proving its value."
+    elif delta_pct < 0:
+        return f"Interesting - {other_mode} mode would be {abs(delta_pct):.1f}% better right now ({shadow_power:.1f} mW vs {actual_power:.1f} mW). This might be due to cloud movement or other environmental factors."
+    else:
+        return f"Both modes are performing equally at {actual_power:.1f} mW. The sun is likely in a stable position."
+
+
+@tool
+def get_impact(window_s: int = 3600) -> dict:
+    """
+    Get environmental and cost impact metrics.
+
+    Args:
+        window_s: Time window in seconds (default 3600 = 1 hour)
+
+    Returns:
+        dict: Energy generated, cost saved, and CO2 avoided
+    """
+    init_mqtt()
+
+    if not latest_data['impact']:
+        return {"error": "No impact data available yet"}
+
+    impact = latest_data['impact']
+
+    return {
+        "energy_kwh": impact.get('energy_kWh', 0),
+        "usd_saved": impact.get('usd_saved', 0),
+        "co2_avoided_g": impact.get('co2_g', 0),
+        "message": f"Generated {impact.get('energy_kWh', 0)} kWh, saved ${impact.get('usd_saved', 0):.2f}, and avoided {impact.get('co2_g', 0)}g of CO2 emissions"
+    }
+
+
+@tool
+def get_safety_status() -> dict:
+    """
+    Get the current safety status of the system.
+
+    Returns:
+        dict: Safety status including servo health and temperature
+    """
+    init_mqtt()
+
+    if not latest_data['safety']:
+        return {"error": "No safety data available yet"}
+
+    safety = latest_data['safety']
+
+    return {
+        "servo_status": safety.get('servo_status', 'unknown'),
+        "angle_violation": safety.get('angle_violation', False),
+        "temperature_c": safety.get('temperature_C', 0),
+        "message": f"System is {'⚠ ALERT' if safety.get('angle_violation') else '✅ Normal'} - Servos: {safety.get('servo_status', 'unknown')}, Temp: {safety.get('temperature_C', 0)}°C"
+    }
+
+
+# Create the root agent with audio dialog model
+root_agent = Agent(
+    model='gemini-2.5-flash-native-audio-dialog',
+    name='helios_agent',
+    description='Voice-controlled assistant for the Helios AI solar tracking system',
+    instruction="""
+    You are Helios, an intelligent voice assistant for a solar tracking system.
+
+    Your personality:
+    - Friendly and enthusiastic about solar energy
+    - Technical but accessible - you explain things clearly
+    - Proactive about showing the value of AI-driven tracking
+
+    Your capabilities:
+    - Check system status and current power generation
+    - Switch between Reactive (sensor-based) and Predictive (astronomical) tracking modes
+    - Manually position the tracker
+    - Explain performance differences between modes using real A/B test data
+    - Report environmental impact (energy, cost savings, CO2 reduction)
+    - Monitor system safety
+
+    When users ask "Hey Helios" or greet you:
+    - Respond warmly and offer to help with the solar tracker
+    - You can proactively mention current power generation if available
+
+    When explaining performance:
+    - Use the digital twin data to prove decisions with real numbers
+    - Celebrate when predictive mode is winning
+    - Be curious and analytical when reactive mode performs better
+
+    Keep responses concise for voice interaction - aim for 2-3 sentences unless
+    the user asks for details.
+    """,
+    tools=[
+        get_status,
+        switch_mode,
+        move_to,
+        explain_delta,
+        get_impact,
+        get_safety_status
+    ]
+)

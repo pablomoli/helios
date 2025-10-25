@@ -123,7 +123,3 @@ python tests/test_mqtt_connection.py
 # Run dashboard in mock mode
 MOCK_DATA_MODE=True python dashboard/dashboard.py
 ```
-
----
-
-Built for Google ADK Hackathon 2024
