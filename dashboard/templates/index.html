@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helios AI - Solar Tracker Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <h1>⚡ Helios AI</h1>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">Connecting...</span>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <main class="dashboard-grid">
+            <!-- 1. Live Sky Map (Top-Left) -->
+            <section class="panel sky-map-panel">
+                <h2>Live Cloud Coverage Map</h2>
+                <div class="sky-map-content">
+                    <div id="cloudMap" class="cloud-map"></div>
+                    <div class="cloud-info">
+                        <div class="cloud-cover-display">
+                            <span class="cloud-value" id="cloudValue">--</span>
+                            <span class="cloud-label">Cloud Cover</span>
+                        </div>
+                        <div class="location-display" id="locationDisplay">
+                            <span class="location-icon">📍</span>
+                            <span class="location-text">Detecting location...</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 2. Real-Time Analytics (Top-Right) -->
+            <section class="panel analytics-panel">
+                <h2>Real-Time Analytics</h2>
+                <div class="analytics-grid">
+                    <div class="metric primary">
+                        <span class="metric-label">Current Power</span>
+                        <span class="metric-value" id="currentPower">-- mW</span>
+                    </div>
+                    <div class="metric primary">
+                        <span class="metric-label">Energy Today</span>
+                        <span class="metric-value" id="energyToday">-- mWh</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Mode</span>
+                        <span class="metric-value mode-badge" id="currentMode">--</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Panel Voltage</span>
+                        <span class="metric-value" id="panelVoltage">-- V</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Panel Current</span>
+                        <span class="metric-value" id="panelCurrent">-- mA</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3. A/B Comparison Graph (Center, Large) -->
+            <section class="panel graph-panel">
+                <h2>Digital Twin Performance</h2>
+                <div class="graph-header">
+                    <div class="delta-badge" id="deltaBadge">
+                        <span class="delta-value">--</span>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="performanceChart"></canvas>
+                </div>
+            </section>
+
+            <!-- 4. Impact Metrics Panel (Bottom-Left) -->
+            <section class="panel impact-panel">
+                <h2>Environmental Impact</h2>
+                <div class="impact-metrics">
+                    <div class="impact-item">
+                        <div class="impact-icon energy">⚡</div>
+                        <div class="impact-data">
+                            <span class="impact-value" id="impactEnergy">0.000</span>
+                            <span class="impact-unit">kWh</span>
+                            <span class="impact-label">Energy Generated</span>
+                        </div>
+                    </div>
+                    <div class="impact-item">
+                        <div class="impact-icon cost">💵</div>
+                        <div class="impact-data">
+                            <span class="impact-value" id="impactCost">$0.00</span>
+                            <span class="impact-unit"></span>
+                            <span class="impact-label">Cost Saved</span>
+                        </div>
+                    </div>
+                    <div class="impact-item">
+                        <div class="impact-icon co2">🌱</div>
+                        <div class="impact-data">
+                            <span class="impact-value" id="impactCO2">0.0</span>
+                            <span class="impact-unit">g</span>
+                            <span class="impact-label">CO2 Avoided</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 5. Safety Monitor (Bottom-Center) -->
+            <section class="panel safety-panel">
+                <h2>Safety Monitor</h2>
+                <div class="safety-content">
+                    <div class="safety-status" id="safetyStatus">
+                        <div class="status-icon">✓</div>
+                        <div class="status-text">Normal</div>
+                    </div>
+                    <div class="safety-details">
+                        <div class="safety-item">
+                            <span class="safety-label">Servo Status:</span>
+                            <span class="safety-value" id="servoStatus">normal</span>
+                        </div>
+                        <div class="safety-item">
+                            <span class="safety-label">Angle Check:</span>
+                            <span class="safety-value" id="angleCheck">OK</span>
+                        </div>
+                        <div class="safety-item">
+                            <span class="safety-label">Temperature:</span>
+                            <span class="safety-value" id="temperature">--°C</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 6. Voice Log (Bottom-Right) -->
+            <section class="panel voice-log-panel">
+                <h2>Voice Command Log</h2>
+                <div class="voice-log" id="voiceLog">
+                    <div class="voice-entry">
+                        <span class="voice-time">--:--:--</span>
+                        <span class="voice-text">System started</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="{{ url_for('static', filename='js/connection-manager.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/sky-map.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/analytics.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/ab-comparison-chart.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/impact-panel.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/safety-monitor.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/voice-log.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

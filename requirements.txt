@@ -1,0 +1,26 @@
+# Core Flask & WebSocket
+flask==3.0.0
+flask-socketio==5.3.5
+python-socketio==5.10.0
+
+# MQTT Client
+paho-mqtt==1.6.1
+
+# Environment Variables
+python-dotenv==1.0.0
+
+# Sun Position Calculation (Offline)
+pysolar==0.10
+pytz==2023.3
+
+# HTTP Requests (Weather API)
+requests==2.31.0
+
+# Google ADK (Voice Agent)
+google-adk==0.1.0
+
+# Data Processing
+numpy==1.26.2
+
+# Development
+pytest==7.4.3
