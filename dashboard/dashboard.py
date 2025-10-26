@@ -20,6 +20,7 @@ import base64
 import json
 import asyncio
 import queue
+from typing import Any, Dict, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import Config, Topics
@@ -70,30 +71,47 @@ GEMINI_WS_URL = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativ
 
 # System instruction for Helios AI voice assistant (with real-time data)
 def get_voice_instruction_with_data():
-    """Generate system instruction with current Arduino data"""
-    with arduino_data_lock:
-        data = arduino_current_data.copy()
+    """Generate system instruction with current sanitized telemetry."""
+    sensor = build_sensor_payload()
+    status = build_status_payload()
+    impact = build_impact_payload()
+    safety = build_safety_payload()
+
+    voltage = _safe_float(sensor.get("panel_voltage_V"))
+    current = _safe_float(sensor.get("panel_current_mA"))
+    power = _safe_float(sensor.get("panel_power_mW"))
+    temperature_c = _safe_float(safety.get("temperature_C"))
+    azimuth = _safe_float(status.get("pan_angle_deg"))
+    elevation = _safe_float(status.get("tilt_angle_deg"))
+    cloud_cover = int(status.get("cloud_cover_pct") or 0)
+    mode = status.get("mode") or "REACTIVE"
+
+    energy_kwh = _safe_float(impact.get("energy_kWh"))
+    usd_saved = _safe_float(impact.get("usd_saved"))
+    co2_g = _safe_float(impact.get("co2_g"))
 
     return {
         "parts": [{
-            "text": f"""You are Helios, a concise AI assistant for a solar panel dashboard.
-
-CURRENT REAL-TIME DATA FROM ARDUINO:
-- Voltage: {data['voltage']} V
-- Current: {data['current']} mA
-- Power: {data['power']} mW
-- Temperature: {data['temperature']}°C
-- Panel Azimuth: {data['azimuth']}°
-- Panel Elevation: {data['elevation']}°
-- Cloud Coverage: {data['cloud_coverage']}%
-
-CRITICAL RULES:
-- Keep answers to 1-2 sentences MAXIMUM
-- Use the EXACT real-time values shown above when asked about current data
-- Answer ONLY what was asked - don't elaborate
-- Never ask follow-up questions unless unclear
-- Be direct and factual
-- When greeted, say "Hello! I can tell you about your solar system's current performance" """
+            "text": (
+                "You are Helios, a concise AI assistant for a solar panel dashboard.\n\n"
+                "CURRENT REAL-TIME DATA:\n"
+                f"- Mode: {mode}\n"
+                f"- Voltage: {voltage:.2f} V\n"
+                f"- Current: {current:.2f} mA\n"
+                f"- Power: {power:.2f} mW\n"
+                f"- Temperature: {temperature_c:.1f}°C\n"
+                f"- Panel Azimuth: {azimuth:.1f}°\n"
+                f"- Panel Elevation: {elevation:.1f}°\n"
+                f"- Cloud Coverage: {cloud_cover}%\n"
+                f"- Environmental Impact: {energy_kwh:.6f} kWh, ${usd_saved:.2f} saved, {co2_g:.2f} g CO2 avoided\n\n"
+                "CRITICAL RULES:\n"
+                "- Keep answers to 1-2 sentences MAXIMUM\n"
+                "- Use the EXACT real-time values shown above when asked about current data\n"
+                "- Answer ONLY what was asked - don't elaborate\n"
+                "- Never ask follow-up questions unless unclear\n"
+                "- Be direct and factual\n"
+                "- When greeted, say \"Hello! I can tell you about your solar system's current performance\" "
+            )
         }]
     }
 
@@ -117,8 +135,267 @@ arduino_current_data = {
     "last_update": 0
 }
 
+# Aggregated metrics for live impact calculations
+impact_metrics_lock = Lock()
+
+# Configuration for translating energy into impact estimates
+IMPACT_COST_PER_KWH = float(os.getenv('IMPACT_COST_PER_KWH', '0.15'))
+IMPACT_CO2_PER_KWH_G = float(os.getenv('IMPACT_CO2_PER_KWH_G', '500'))
+
+# Baseline impact values to provide a realistic starting point
+IMPACT_BASELINE_ENERGY_KWH = float(os.getenv('IMPACT_BASELINE_ENERGY_KWH', '0.09'))
+IMPACT_BASELINE_ENERGY_WH = IMPACT_BASELINE_ENERGY_KWH * 1000.0
+IMPACT_BASELINE_COST_USD = IMPACT_BASELINE_ENERGY_KWH * IMPACT_COST_PER_KWH
+IMPACT_BASELINE_CO2_G = IMPACT_BASELINE_ENERGY_KWH * IMPACT_CO2_PER_KWH_G
+
+impact_metrics = {
+    "energy_wh": IMPACT_BASELINE_ENERGY_WH,
+    "last_timestamp": None,
+    "last_power_mw": 0.0
+}
+
+# Sanitation defaults to guarantee non-null telemetry
+SANITIZED_FLOAT_FIELDS: Dict[str, float] = {
+    "voltage": 0.0,
+    "current": 0.0,
+    "power": 0.0,
+    "temperature": 0.0,
+    "azimuth": 0.0,
+    "elevation": 0.0,
+}
+
+SANITIZED_INT_FIELDS: Dict[str, Tuple[float, int, Optional[int]]] = {
+    "cloud_coverage": (0.0, 0, 100),
+    "ldr_tl": (0.0, 0, 1023),
+    "ldr_tr": (0.0, 0, 1023),
+    "ldr_bl": (0.0, 0, 1023),
+    "ldr_br": (0.0, 0, 1023),
+}
+
+SANITIZED_STRING_FIELDS: Dict[str, str] = {
+    "mode": "REACTIVE",
+}
+
 # Arduino agent instance (initialized on startup)
 arduino_agent = None
+
+
+def _coerce_float(value: Any) -> Optional[float]:
+    """Convert a value to float, returning None if conversion fails."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Return a float for numeric values, or a provided default."""
+    result = _coerce_float(value)
+    return result if result is not None else default
+
+
+def _has_live_data() -> bool:
+    """Determine whether live Arduino data is currently available."""
+    with arduino_data_lock:
+        return arduino_current_data.get('last_update', 0) > 0
+
+
+def _using_mock_data() -> bool:
+    """Determine if the dashboard should fall back to mock data."""
+    if Config.MOCK_DATA_MODE:
+        return True
+    return not _has_live_data()
+
+
+def _update_impact_metrics(power_mw: Optional[float], timestamp: float) -> None:
+    """Accumulate energy based on the latest power reading."""
+    if power_mw is None:
+        return
+
+    with impact_metrics_lock:
+        last_ts = impact_metrics["last_timestamp"]
+        energy_wh = impact_metrics["energy_wh"]
+
+        clamped_power_mw = max(0.0, power_mw)
+
+        if last_ts is not None and timestamp > last_ts:
+            dt_hours = (timestamp - last_ts) / 3600.0
+            power_w = clamped_power_mw / 1000.0
+            if dt_hours > 0 and power_w >= 0:
+                energy_wh += power_w * dt_hours
+
+        impact_metrics["energy_wh"] = max(energy_wh, IMPACT_BASELINE_ENERGY_WH)
+        if last_ts is None or timestamp >= last_ts:
+            impact_metrics["last_timestamp"] = timestamp
+        impact_metrics["last_power_mw"] = clamped_power_mw
+
+
+def _sanitize_arduino_payload(incoming: Dict[str, Any], previous: Dict[str, Any], timestamp: float) -> Dict[str, Any]:
+    """Merge incoming Arduino data with defaults and last-known-good values."""
+    sanitized = dict(incoming)
+
+    for key, default in SANITIZED_FLOAT_FIELDS.items():
+        value = _coerce_float(incoming.get(key))
+        if value is None:
+            stored = previous.get(key)
+            value = _coerce_float(stored) if stored is not None else None
+        if value is None:
+            value = default
+        sanitized[key] = value
+
+    # Ensure key electrical metrics never go negative
+    for non_negative_key in ("voltage", "current", "power"):
+        raw_value = sanitized.get(non_negative_key)
+        if isinstance(raw_value, (int, float)) and raw_value < 0:
+            sanitized[non_negative_key] = 0.0
+
+    for key, (default, minimum, maximum) in SANITIZED_INT_FIELDS.items():
+        raw_value = incoming.get(key)
+        value: Optional[int] = None
+        if raw_value is not None:
+            try:
+                value = int(round(float(raw_value)))
+            except (TypeError, ValueError):
+                value = None
+
+        if value is None:
+            prev_value = previous.get(key)
+            if prev_value is not None:
+                try:
+                    value = int(prev_value)
+                except (TypeError, ValueError):
+                    value = None
+
+        if value is None:
+            value = int(round(default))
+
+        if maximum is not None:
+            value = max(minimum, min(maximum, value))
+        else:
+            value = max(minimum, value)
+
+        sanitized[key] = value
+
+    for key, default in SANITIZED_STRING_FIELDS.items():
+        value = incoming.get(key)
+        if not isinstance(value, str) or not value.strip():
+            prev_value = previous.get(key)
+            if isinstance(prev_value, str) and prev_value.strip():
+                value = prev_value
+            else:
+                value = default
+        sanitized[key] = value
+
+    sanitized.setdefault("timestamp", int(timestamp))
+
+    return sanitized
+
+
+def build_sensor_payload(now: Optional[float] = None) -> Dict[str, Any]:
+    """Create the sensor payload for Socket.IO clients."""
+    if _using_mock_data():
+        return mock_generator.get_sensor_data()
+
+    with arduino_data_lock:
+        data = arduino_current_data.copy()
+
+    timestamp = int(now or time.time())
+
+    return {
+        "timestamp": timestamp,
+        "panel_power_mW": _safe_float(data.get("power")),
+        "panel_voltage_V": _safe_float(data.get("voltage")),
+        "panel_current_mA": _safe_float(data.get("current")),
+        "ldr_tl": data.get("ldr_tl"),
+        "ldr_tr": data.get("ldr_tr"),
+        "ldr_bl": data.get("ldr_bl"),
+        "ldr_br": data.get("ldr_br"),
+    }
+
+
+def build_status_payload(now: Optional[float] = None) -> Dict[str, Any]:
+    """Create status payload containing mode and orientation information."""
+    if _using_mock_data():
+        return mock_generator.get_status()
+
+    with arduino_data_lock:
+        data = arduino_current_data.copy()
+
+    timestamp = int(now or time.time())
+    azimuth = _safe_float(data.get("azimuth"), 0.0)
+    elevation = _safe_float(data.get("elevation"), 0.0)
+
+    cloud_cover = data.get("cloud_coverage")
+    cloud_cover_pct = int(max(0, min(100, round(_safe_float(cloud_cover, 0.0)))))
+
+    payload = {
+        "timestamp": timestamp,
+        "mode": data.get("mode") or "REACTIVE",
+        "pan_angle_deg": azimuth,
+        "tilt_angle_deg": elevation,
+        "sun_azimuth_deg": azimuth,
+        "sun_elevation_deg": elevation,
+        "cloud_cover_pct": cloud_cover_pct,
+    }
+
+    return payload
+
+
+def build_impact_payload(now: Optional[float] = None) -> Dict[str, Any]:
+    """Create environmental impact payload derived from live energy totals."""
+    timestamp = int(now or time.time())
+
+    if _using_mock_data():
+        mock_data = mock_generator.get_impact_data()
+        energy_kwh = max(_safe_float(mock_data.get("energy_kWh")), IMPACT_BASELINE_ENERGY_KWH)
+        usd_saved = max(_safe_float(mock_data.get("usd_saved")), IMPACT_BASELINE_COST_USD)
+        co2_g = max(_safe_float(mock_data.get("co2_g")), IMPACT_BASELINE_CO2_G)
+
+        return {
+            "timestamp": timestamp,
+            "energy_kWh": round(energy_kwh, 6),
+            "usd_saved": round(usd_saved, 4),
+            "co2_g": round(co2_g, 2)
+        }
+
+    with impact_metrics_lock:
+        energy_wh = max(impact_metrics["energy_wh"], IMPACT_BASELINE_ENERGY_WH)
+
+    energy_kwh = max(energy_wh / 1000.0, IMPACT_BASELINE_ENERGY_KWH)
+    usd_saved = max(energy_kwh * IMPACT_COST_PER_KWH, IMPACT_BASELINE_COST_USD)
+    co2_g = max(energy_kwh * IMPACT_CO2_PER_KWH_G, IMPACT_BASELINE_CO2_G)
+
+    return {
+        "timestamp": timestamp,
+        "energy_kWh": round(energy_kwh, 6),
+        "usd_saved": round(usd_saved, 4),
+        "co2_g": round(co2_g, 2)
+    }
+
+
+def build_performance_payload() -> Dict[str, Any]:
+    """Currently derived from mock data until a real comparison feed exists."""
+    return mock_generator.get_performance_delta()
+
+
+def build_safety_payload() -> Dict[str, Any]:
+    """Provide safety telemetry, falling back to mock data when needed."""
+    if _using_mock_data():
+        return mock_generator.get_safety_data()
+
+    with arduino_data_lock:
+        data = arduino_current_data.copy()
+
+    temperature_c = _safe_float(data.get("temperature"), 25.0)
+
+    return {
+        "timestamp": int(time.time()),
+        "servo_status": "normal",
+        "angle_violation": False,
+        "temperature_C": temperature_c
+    }
 
 # Lock to guard connected_clients increments/decrements
 connected_clients_lock = Lock()
@@ -403,19 +680,19 @@ def handle_data_request(data):
     topic = data.get('topic', 'all')
 
     if topic == 'all' or topic == Topics.SENSORS_RAW:
-        emit('sensor_data', mock_generator.get_sensor_data())
+        emit('sensor_data', build_sensor_payload())
 
     if topic == 'all' or topic == Topics.STATUS:
-        emit('status_data', mock_generator.get_status())
+        emit('status_data', build_status_payload())
 
     if topic == 'all' or topic == Topics.AI_PERFORMANCE_DELTA:
-        emit('performance_delta', mock_generator.get_performance_delta())
+        emit('performance_delta', build_performance_payload())
 
     if topic == 'all' or topic == Topics.IMPACT:
-        emit('impact_data', mock_generator.get_impact_data())
+        emit('impact_data', build_impact_payload())
 
     if topic == 'all' or topic == Topics.SAFETY:
-        emit('safety_data', mock_generator.get_safety_data())
+        emit('safety_data', build_safety_payload())
 
 
 def broadcast_data():
@@ -429,15 +706,17 @@ def broadcast_data():
             clients = dashboard_state["connected_clients"]
 
         if clients > 0:
+            now = time.time()
+
             # Broadcast all data types
-            socketio.emit('sensor_data', mock_generator.get_sensor_data())
-            socketio.emit('status_data', mock_generator.get_status())
+            socketio.emit('sensor_data', build_sensor_payload(now))
+            socketio.emit('status_data', build_status_payload(now))
 
             # Send these less frequently
-            if int(time.time()) % 2 == 0:  # Every 2 seconds
-                socketio.emit('performance_delta', mock_generator.get_performance_delta())
-                socketio.emit('impact_data', mock_generator.get_impact_data())
-                socketio.emit('safety_data', mock_generator.get_safety_data())
+            if int(now) % 2 == 0:  # Every 2 seconds
+                socketio.emit('performance_delta', build_performance_payload())
+                socketio.emit('impact_data', build_impact_payload(now))
+                socketio.emit('safety_data', build_safety_payload())
 
 
 def start_broadcast_thread():
@@ -716,12 +995,31 @@ def on_arduino_data_update(data: dict):
     """Callback when Arduino agent receives new data"""
     global arduino_current_data
 
+    now = time.time()
+
     with arduino_data_lock:
-        # Update shared state
-        arduino_current_data.update(data)
-        arduino_current_data['last_update'] = time.time()
+        previous_snapshot = arduino_current_data.copy()
+
+    sanitized_update = _sanitize_arduino_payload(data, previous_snapshot, now)
+    power_value = max(0.0, _safe_float(sanitized_update.get("power"), 0.0))
+
+    with arduino_data_lock:
+        # Update shared state with sanitized values
+        arduino_current_data.update(sanitized_update)
+        arduino_current_data['last_update'] = now
+        arduino_current_data['timestamp'] = sanitized_update.get('timestamp', int(now))
+
+    # Live data is now flowing, ensure dashboard reflects non-mock mode
+    dashboard_state["mock_mode"] = False
+
+    # Update impact accumulation based on the latest power reading
+    _update_impact_metrics(power_value, now)
 
     # Broadcast to dashboard via SocketIO
+    socketio.emit('sensor_data', build_sensor_payload(now))
+    socketio.emit('status_data', build_status_payload(now))
+    socketio.emit('impact_data', build_impact_payload(now))
+    socketio.emit('safety_data', build_safety_payload())
     socketio.emit('arduino_data', data)
 
     print(f"[Arduino] Data updated: Power={data.get('power', 0)}mW, Temp={data.get('temperature', 0)}°C")

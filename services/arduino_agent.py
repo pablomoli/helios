@@ -90,7 +90,46 @@ class ArduinoDataAgent:
             print(f"[ArduinoAgent] Failed to connect: {e}")
             return False
 
-    def parse_with_gemini(self, raw_data: str) -> Dict:
+    def _parse_status_frame(self, raw: str) -> Dict:
+        """Parse structured status frames emitted by the Arduino sketch."""
+        parts = [segment.strip() for segment in raw.split(',')]
+
+        if len(parts) < 11:
+            raise ValueError(f"Unexpected status payload (len={len(parts)}): {raw}")
+
+        try:
+            pan_angle = float(parts[1])
+            tilt_angle = float(parts[2])
+            ldr_tl = int(float(parts[3]))
+            ldr_tr = int(float(parts[4]))
+            ldr_bl = int(float(parts[5]))
+            ldr_br = int(float(parts[6]))
+            mode = parts[7]
+            voltage = float(parts[8])
+            current = float(parts[9])
+            power = float(parts[10])
+        except (ValueError, IndexError) as exc:
+            raise ValueError(f"Failed to convert status payload values: {raw}") from exc
+
+        timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+        return {
+            "voltage": voltage,
+            "current": current,
+            "power": power,
+            "temperature": self.current_data.get("temperature"),
+            "azimuth": pan_angle,
+            "elevation": tilt_angle,
+            "cloud_coverage": self.current_data.get("cloud_coverage"),
+            "timestamp": timestamp,
+            "mode": mode,
+            "ldr_tl": ldr_tl,
+            "ldr_tr": ldr_tr,
+            "ldr_bl": ldr_bl,
+            "ldr_br": ldr_br
+        }
+
+    def parse_with_gemini(self, raw_data: str) -> Optional[Dict]:
         """
         Use Gemini to parse Arduino sensor data
 
@@ -98,8 +137,20 @@ class ArduinoDataAgent:
             raw_data: Raw text from Arduino
 
         Returns:
-            Parsed data as dictionary
+            Parsed data as dictionary or None if the payload should be ignored
         """
+        if raw_data.startswith("S,"):
+            try:
+                return self._parse_status_frame(raw_data)
+            except ValueError as exc:
+                print(f"[ArduinoAgent] Status frame parse error: {exc}")
+                return {"error": str(exc), "raw": raw_data}
+
+        # Skip known informational lines emitted by the firmware so they don't
+        # clobber the latest structured data update.
+        if raw_data.startswith("Arduino:") or raw_data.startswith("Safe Range"):
+            return None
+
         prompt = f"""Parse this Arduino sensor data into valid JSON format.
 
 Raw data from Arduino:
@@ -183,6 +234,9 @@ Now parse the data above:"""
 
                     # Parse with Gemini
                     parsed_data = self.parse_with_gemini(raw_data)
+
+                    if parsed_data is None:
+                        continue
 
                     # Update current data
                     self.current_data = parsed_data
