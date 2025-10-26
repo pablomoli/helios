@@ -89,13 +89,13 @@
 </head>
 <body>
     <!-- Voice Visualizer Overlay -->
-    <div id="voiceVisualizerOverlay" class="voice-visualizer-overlay">
+    <div id="voiceVisualizerOverlay" class="voice-visualizer-overlay" role="dialog" aria-modal="true" aria-labelledby="voiceVisualizerTitle" aria-describedby="voiceStatus">
         <div class="voice-visualizer-container">
             <div class="voice-visualizer-header">
-                <h3>Voice Assistant Active</h3>
-                <button id="closeVoiceVisualizer" class="close-visualizer-btn">×</button>
+                <h3 id="voiceVisualizerTitle">Voice Assistant Active</h3>
+                <button id="closeVoiceVisualizer" class="close-visualizer-btn" aria-label="Close voice visualizer">×</button>
             </div>
-            <canvas id="voiceVisualizerCanvas" class="voice-visualizer-canvas"></canvas>
+            <canvas id="voiceVisualizerCanvas" class="voice-visualizer-canvas" aria-hidden="true"></canvas>
             <div class="voice-visualizer-status">
                 <span id="voiceStatus">Ready to listen...</span>
             </div>
@@ -115,7 +115,7 @@
                 <span class="admin-badge">Admin Dashboard</span>
             </div>
             <div class="header-controls">
-                <button id="toggleVoiceVisualizer" class="voice-toggle-btn" title="Activate Voice Assistant">
+                <button id="toggleVoiceVisualizer" class="voice-toggle-btn" title="Activate Voice Assistant" aria-label="Toggle voice assistant" aria-pressed="false">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
                         <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
@@ -292,21 +292,39 @@
         let voiceVisualizer = null;
 
         document.addEventListener('DOMContentLoaded', () => {
-            voiceVisualizer = new VoiceVisualizer('voiceVisualizerCanvas');
-
             const overlay = document.getElementById('voiceVisualizerOverlay');
             const toggleBtn = document.getElementById('toggleVoiceVisualizer');
             const closeBtn = document.getElementById('closeVoiceVisualizer');
 
+            // Initialize visualizer with error handling
+            try {
+                voiceVisualizer = new VoiceVisualizer('voiceVisualizerCanvas');
+            } catch (error) {
+                console.error('[Helios AI] Failed to initialize voice visualizer:', error);
+                toggleBtn.disabled = true;
+                toggleBtn.style.opacity = '0.5';
+                toggleBtn.title = 'Voice visualizer unavailable';
+                return;
+            }
+
             // Toggle voice visualizer
-            toggleBtn.addEventListener('click', () => {
-                overlay.classList.add('active');
-                voiceVisualizer.start();
+            toggleBtn.addEventListener('click', async () => {
+                try {
+                    overlay.classList.add('active');
+                    toggleBtn.setAttribute('aria-pressed', 'true');
+                    await voiceVisualizer.start();
+                } catch (error) {
+                    console.error('[Helios AI] Failed to start voice visualizer:', error);
+                    overlay.classList.remove('active');
+                    toggleBtn.setAttribute('aria-pressed', 'false');
+                    alert('Failed to start voice assistant. Please check microphone permissions.');
+                }
             });
 
             // Close voice visualizer
             closeBtn.addEventListener('click', () => {
                 overlay.classList.remove('active');
+                toggleBtn.setAttribute('aria-pressed', 'false');
                 voiceVisualizer.stop();
             });
 
@@ -314,6 +332,7 @@
             overlay.addEventListener('click', (e) => {
                 if (e.target === overlay) {
                     overlay.classList.remove('active');
+                    toggleBtn.setAttribute('aria-pressed', 'false');
                     voiceVisualizer.stop();
                 }
             });

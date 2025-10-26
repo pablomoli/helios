@@ -58,6 +58,9 @@ class VoiceVisualizer {
                 }
             });
 
+            // Save stream to instance property for cleanup
+            this.stream = stream;
+
             // Create audio context
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             this.analyser = this.audioContext.createAnalyser();
@@ -91,9 +94,25 @@ class VoiceVisualizer {
             this.animationId = null;
         }
 
-        // Stop microphone
-        if (this.microphone && this.microphone.mediaStream) {
-            this.microphone.mediaStream.getTracks().forEach(track => track.stop());
+        // Stop all media stream tracks
+        if (this.stream) {
+            this.stream.getTracks().forEach(track => {
+                track.stop();
+                console.log('[VoiceVisualizer] Stopped track:', track.kind);
+            });
+            this.stream = null;
+        }
+
+        // Disconnect microphone node
+        if (this.microphone) {
+            this.microphone.disconnect();
+            this.microphone = null;
+        }
+
+        // Disconnect analyser
+        if (this.analyser) {
+            this.analyser.disconnect();
+            this.analyser = null;
         }
 
         // Close audio context

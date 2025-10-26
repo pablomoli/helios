@@ -1033,6 +1033,24 @@ body::after {
     .status-icon:hover {
         transform: none !important;
     }
+
+    /* Disable voice visualizer animations */
+    .voice-visualizer-overlay {
+        transition: none !important;
+    }
+
+    .voice-visualizer-container {
+        transform: none !important;
+        transition: none !important;
+    }
+
+    .voice-visualizer-overlay.active .voice-visualizer-container {
+        transform: none !important;
+    }
+
+    .close-visualizer-btn:hover {
+        transform: none !important;
+    }
 }
 
 /* ============================================ */
@@ -1132,8 +1150,8 @@ body::after {
 .close-visualizer-btn {
     background: rgba(255, 255, 255, 0.1);
     border: none;
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
     border-radius: 50%;
     font-size: 1.5rem;
     color: var(--text-primary);
@@ -1187,7 +1205,7 @@ body::after {
     }
 
     .voice-toggle-btn {
-        width: 40px;
-        height: 40px;
+        width: 44px;
+        height: 44px;
     }
 }
