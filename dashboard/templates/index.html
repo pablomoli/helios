@@ -88,18 +88,45 @@
     </svg>
 </head>
 <body>
+    <!-- Voice Visualizer Overlay -->
+    <div id="voiceVisualizerOverlay" class="voice-visualizer-overlay">
+        <div class="voice-visualizer-container">
+            <div class="voice-visualizer-header">
+                <h3>Voice Assistant Active</h3>
+                <button id="closeVoiceVisualizer" class="close-visualizer-btn">×</button>
+            </div>
+            <canvas id="voiceVisualizerCanvas" class="voice-visualizer-canvas"></canvas>
+            <div class="voice-visualizer-status">
+                <span id="voiceStatus">Ready to listen...</span>
+            </div>
+        </div>
+    </div>
+
     <div class="dashboard-container">
         <!-- Header -->
         <header class="dashboard-header">
-            <h1>
-                <svg class="logo-icon" width="28" height="28">
-                    <use href="#icon-lightning"></use>
-                </svg>
-                Helios AI
-            </h1>
-            <div class="connection-status" id="connectionStatus">
-                <span class="status-dot"></span>
-                <span class="status-text">Connecting...</span>
+            <div class="header-title-section">
+                <h1>
+                    <svg class="logo-icon" width="28" height="28">
+                        <use href="#icon-lightning"></use>
+                    </svg>
+                    Helios AI
+                </h1>
+                <span class="admin-badge">Admin Dashboard</span>
+            </div>
+            <div class="header-controls">
+                <button id="toggleVoiceVisualizer" class="voice-toggle-btn" title="Activate Voice Assistant">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" y1="19" x2="12" y2="23"></line>
+                        <line x1="8" y1="23" x2="16" y2="23"></line>
+                    </svg>
+                </button>
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Connecting...</span>
+                </div>
             </div>
         </header>
 
@@ -229,7 +256,7 @@
                         </div>
                         <div class="safety-item">
                             <span class="safety-label">Temperature:</span>
-                            <span class="safety-value" id="temperature">--°C</span>
+                            <span class="safety-value" id="temperature">--°F</span>
                         </div>
                     </div>
                 </div>
@@ -256,6 +283,43 @@
     <script src="{{ url_for('static', filename='js/components/impact-panel.js') }}"></script>
     <script src="{{ url_for('static', filename='js/components/safety-monitor.js') }}"></script>
     <script src="{{ url_for('static', filename='js/components/voice-log.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/voice-visualizer.js') }}"></script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+    <!-- Voice Visualizer Initialization -->
+    <script>
+        // Initialize voice visualizer when page loads
+        let voiceVisualizer = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            voiceVisualizer = new VoiceVisualizer('voiceVisualizerCanvas');
+
+            const overlay = document.getElementById('voiceVisualizerOverlay');
+            const toggleBtn = document.getElementById('toggleVoiceVisualizer');
+            const closeBtn = document.getElementById('closeVoiceVisualizer');
+
+            // Toggle voice visualizer
+            toggleBtn.addEventListener('click', () => {
+                overlay.classList.add('active');
+                voiceVisualizer.start();
+            });
+
+            // Close voice visualizer
+            closeBtn.addEventListener('click', () => {
+                overlay.classList.remove('active');
+                voiceVisualizer.stop();
+            });
+
+            // Close on overlay click (outside container)
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    overlay.classList.remove('active');
+                    voiceVisualizer.stop();
+                }
+            });
+
+            console.log('[Helios AI] Voice visualizer ready');
+        });
+    </script>
 </body>
 </html>

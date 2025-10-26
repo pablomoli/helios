@@ -19,12 +19,13 @@ class SafetyMonitor {
         this.angleCheck.textContent = angleViolation ? 'VIOLATION' : 'OK';
         this.angleCheck.style.color = angleViolation ? '#ef4444' : '#10b981';
 
-        // Update temperature
-        const temp = data.temperature_C || 0;
-        this.temperature.textContent = `${temp.toFixed(1)}°C`;
+        // Update temperature (convert Celsius to Fahrenheit)
+        const tempC = data.temperature_C || 0;
+        const tempF = (tempC * 9/5) + 32;
+        this.temperature.textContent = `${tempF.toFixed(1)}°F`;
 
-        // Determine overall status
-        const isNormal = data.servo_status === 'normal' && !angleViolation && temp < 50;
+        // Determine overall status (122°F = 50°C threshold)
+        const isNormal = data.servo_status === 'normal' && !angleViolation && tempF < 122;
 
         if (isNormal) {
             this.safetyStatus.classList.remove('alert');
