@@ -1,22 +1,19 @@
-// routes/snowflake.js
-
 const express = require('express');
 const router = express.Router();
-const fetch = require('node-fetch'); // NOTE: Optional on Node 18+
+const fetch = require('node-fetch'); // Optional on Node 18+
 
-// --- SECURE CONFIGURATION (Fetch from Environment Variables) ---
+// --- SECURE CONFIGURATION (Environment Variables) ---
 const ACCOUNT_IDENTIFIER = process.env.SNOWFLAKE_ACCOUNT_IDENTIFIER;
 const SNOWFLAKE_TOKEN = process.env.PERSONAL_ACCESS_TOKEN;
 
-// Dynamically construct the full URL using the environment variable
 const SNOWFLAKE_URL = `https://${ACCOUNT_IDENTIFIER}.snowflakecomputing.com/api/v2/cortex/inference:complete`;
 // ----------------------------------------------------------------
 
 router.post('/complete', async (req, res) => {
-    console.log("/complete --test");
+    console.log('[Snowflake] /complete called');
 
     if (!SNOWFLAKE_TOKEN || !ACCOUNT_IDENTIFIER) {
-        console.error("Missing SNOWFLAKE_BEARER_TOKEN or SNOWFLAKE_ACCOUNT_IDENTIFIER in environment.");
+        console.error("[Snowflake] Missing required environment keys");
         return res.status(500).json({ error: "Server configuration error: Missing required keys." });
     }
 
@@ -26,10 +23,10 @@ router.post('/complete', async (req, res) => {
     }
 
     try {
-        // --- 0. Get public IP ---
+        // --- 0. Get server public IP ---
         const ipResponse = await fetch('https://icanhazip.com');
         const publicIP = (await ipResponse.text()).trim();
-        console.log('Server public IP:', publicIP);
+        console.log('[Snowflake] Server public IP:', publicIP);
 
         // --- 1. Construct the request body for Snowflake ---
         const payload = {
@@ -48,7 +45,7 @@ router.post('/complete', async (req, res) => {
         });
 
         const responseText = await response.text();
-        const lines = responseText.split('\n').filter(l => l.startsWith('data: '));
+        const lines = responseText.split('\n').filter(line => line.startsWith('data: '));
 
         let finalText = '';
         for (const line of lines) {
@@ -56,19 +53,17 @@ router.post('/complete', async (req, res) => {
                 const json = JSON.parse(line.replace(/^data: /, ''));
                 const content = json.choices?.[0]?.delta?.content || '';
                 finalText += content;
-            } catch (e) {
-                console.error("Failed to parse chunk:", e);
+            } catch (err) {
+                console.error('[Snowflake] Failed to parse chunk:', err);
             }
         }
 
         res.json({ botResponse: finalText, publicIP });
 
-
     } catch (error) {
-        console.error("Error calling Snowflake Cortex API:", error.message);
+        console.error('[Snowflake] Error calling Snowflake Cortex API:', error.message);
         res.status(500).json({ error: "Failed to get a response from the AI assistant." });
     }
 });
-
 
 module.exports = router;

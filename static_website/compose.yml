@@ -1,16 +1,20 @@
-version: "3.8"
+version: "3.9"
+
 services:
-  node:
-    container_name: node_server-wave
-    image: node-server-wave
-    restart: always
+  backend:
+    build: ./backend
+    container_name: helios-backend
+    env_file:
+      - ./backend/.env
+    ports:
+      - "5001:5000"
+
+  frontend:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: front-end/Dockerfile
+    container_name: helios-frontend
     ports:
-      - "30045:45"
-      - "3004:3004"
-    #this binds local directory to the app directory inside the container, so changes will reflect right away
-
-    # depends_on:
-    #   - mysql
+      - "8080:80"
+    depends_on:
+      - backend
