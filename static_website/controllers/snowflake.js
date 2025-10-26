@@ -14,60 +14,61 @@ const SNOWFLAKE_URL = `https://${ACCOUNT_IDENTIFIER}.snowflakecomputing.com/api/
 
 router.post('/complete', async (req, res) => {
     console.log("/complete --test");
-    // 1. Check for required environment variables and message
+
     if (!SNOWFLAKE_TOKEN || !ACCOUNT_IDENTIFIER) {
         console.error("Missing SNOWFLAKE_BEARER_TOKEN or SNOWFLAKE_ACCOUNT_IDENTIFIER in environment.");
         return res.status(500).json({ error: "Server configuration error: Missing required keys." });
     }
 
     const userMessage = req.body.message;
-
     if (!userMessage) {
         return res.status(400).json({ error: "Message content is required." });
     }
 
     try {
-        // 2. Construct the request body for the Snowflake API
+        // --- 0. Get public IP ---
+        const ipResponse = await fetch('https://icanhazip.com');
+        const publicIP = (await ipResponse.text()).trim();
+        console.log('Server public IP:', publicIP);
+
+        // --- 1. Construct the request body for Snowflake ---
         const payload = {
-            "model": "claude-3-5-sonnet",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": userMessage
-                }
-            ]
+            model: "claude-3-5-sonnet",
+            messages: [{ role: "user", content: userMessage }]
         };
 
-        // 3. Make the API call to Snowflake
+        // --- 2. Make the API call to Snowflake ---
         const response = await fetch(SNOWFLAKE_URL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                // Use the PAT as the Bearer Token
                 'Authorization': `Bearer ${SNOWFLAKE_TOKEN}`
             },
             body: JSON.stringify(payload)
         });
 
-        // Check for HTTP errors
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Snowflake API Error: ${response.status} - ${errorText}`);
+        const responseText = await response.text();
+        const lines = responseText.split('\n').filter(l => l.startsWith('data: '));
+
+        let finalText = '';
+        for (const line of lines) {
+            try {
+                const json = JSON.parse(line.replace(/^data: /, ''));
+                const content = json.choices?.[0]?.delta?.content || '';
+                finalText += content;
+            } catch (e) {
+                console.error("Failed to parse chunk:", e);
+            }
         }
 
-        // 4. Parse the JSON response
-        const data = await response.json();
+        res.json({ botResponse: finalText, publicIP });
 
-        // 5. Extract the chatbot's response text
-        const botResponse = data.choices[0].message.content;
-
-        // 6. Send the chatbot's message back to the frontend
-        res.json({ botResponse });
 
     } catch (error) {
         console.error("Error calling Snowflake Cortex API:", error.message);
         res.status(500).json({ error: "Failed to get a response from the AI assistant." });
     }
 });
+
 
 module.exports = router;
