@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  node:
+    container_name: node_server-wave
+    image: node-server-wave
+    restart: always
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "30045:45"
+      - "3004:3004"
+    #this binds local directory to the app directory inside the container, so changes will reflect right away
+
+    # depends_on:
+    #   - mysql

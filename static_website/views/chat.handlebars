@@ -1,0 +1,31 @@
+<div class="container my-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-6">
+            <div class="card shadow-lg border-0">
+                <div class="card-header bg-primary text-white text-center py-3">
+                    <h5 class="mb-0">Snowflake Chatbot ❄️</h5>
+                </div>
+
+                <div class="card-body chat-window" id="chat-messages" style="height: 400px; overflow-y: auto;">
+                    <div class="d-flex justify-content-start mb-3">
+                        <div class="p-3 bg-light rounded-3 shadow-sm">
+                            Hello! I'm your Snowflake assistant. Ask me anything about your data.
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="card-footer bg-light p-3">
+                    <form id="chat-form" class="d-flex">
+                        <input type="text" id="user-input" class="form-control me-2" placeholder="Ask me a question..."
+                            required>
+                        <button type="submit" class="btn btn-primary">
+                            Send <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script src="/js/chat.js"></script>
