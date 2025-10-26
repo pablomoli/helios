@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // 2. Make the API call to your Express backend
-            const response = await fetch('/api/snowflake/complete', {
+            const response = await fetch('/snowflake/complete', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -52,8 +52,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // 3. Handle the response
             if (!response.ok) {
-                throw new Error('Server returned an error.');
+                throw new Error(`Server returned an error: ${response.status} ${response.statusText}`);
             }
+
 
             const data = await response.json();
 

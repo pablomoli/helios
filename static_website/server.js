@@ -9,8 +9,6 @@ const app = express();
 // Set Handlebars as the view engine
 app.engine('handlebars', engine());
 app.set('view engine', 'handlebars');
-
-// Specify the directory where Handlebars templates are stored
 app.set('views', path.join(__dirname, 'views'));
 
 const PORT = process.env.PORT || 3004;
@@ -18,6 +16,9 @@ const PORT = process.env.PORT || 3004;
 // Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
 
+// --- MISSING BODY PARSERS ---
+app.use(express.json()); // for parsing application/json
+app.use(express.urlencoded({ extended: true })); // for parsing form submissions
 
 // Use the routes defined in the 'controllers' directory
 app.use(routes);
