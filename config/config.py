@@ -33,11 +33,9 @@ class Config:
     MOCK_DATA_MODE = os.getenv('MOCK_DATA_MODE', 'False').lower() == 'true'
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 
-    # Porcupine Wake Word
-    PORCUPINE_ACCESS_KEY = os.getenv('PORCUPINE_ACCESS_KEY')
-
-    # ADK Settings
+    # Google ADK Settings
     ADK_PROJECT_ID = os.getenv('ADK_PROJECT_ID')
+    GOOGLE_GENAI_API_KEY = os.getenv('GOOGLE_GENAI_API_KEY')
 
     @classmethod
     def validate(cls):
@@ -63,7 +61,7 @@ Helios AI Configuration:
   Mock Data Mode: {cls.MOCK_DATA_MODE}
   Debug Mode: {cls.DEBUG_MODE}
   OpenWeather API: {'Configured [OK]' if cls.OPENWEATHER_API_KEY else 'Missing [X]'}
-  Porcupine Key: {'Configured [OK]' if cls.PORCUPINE_ACCESS_KEY else 'Missing [X]'}
+  Google Gemini API: {'Configured [OK]' if cls.GOOGLE_GENAI_API_KEY else 'Missing [X]'}
         """.strip()
 
 

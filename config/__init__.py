@@ -1,4 +1,4 @@
 """Configuration module for Helios AI"""
-from .config import Config, Topics
+from .config import Config, Events
 
-__all__ = ['Config', 'Topics']
+__all__ = ['Config', 'Events']

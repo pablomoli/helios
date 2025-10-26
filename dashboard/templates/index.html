@@ -112,7 +112,7 @@
                 </div>
             </section>
 
-            <!-- 5. Safety Monitor (Bottom-Center) -->
+            <!-- 5. Safety Monitor (Bottom-Right) -->
             <section class="panel safety-panel">
                 <h2>Safety Monitor</h2>
                 <div class="safety-content">
@@ -137,13 +137,23 @@
                 </div>
             </section>
 
-            <!-- 6. Voice Log (Bottom-Right) -->
-            <section class="panel voice-log-panel">
-                <h2>Voice Command Log</h2>
-                <div class="voice-log" id="voiceLog">
-                    <div class="voice-entry">
-                        <span class="voice-time">--:--:--</span>
-                        <span class="voice-text">System started</span>
+            <!-- 6. AI Voice Interface (Bottom - Full Width, Horizontal) -->
+            <section class="panel ai-voice-panel">
+                <h2>🎙️ Helios AI Voice</h2>
+                <div class="ai-voice-content-horizontal">
+                    <div class="voice-left-section">
+                        <div class="wake-word-status" id="wakeWordStatus">
+                            <div class="status-indicator inactive">
+                                <div class="pulse-ring"></div>
+                                <span class="status-text">Listening for "Helios"...</span>
+                            </div>
+                        </div>
+                        <div class="ai-response" id="aiResponse">
+                            <div class="response-text">Say "Helios" to activate</div>
+                        </div>
+                    </div>
+                    <div class="spectrogram-container-horizontal">
+                        <canvas id="spectrogramCanvas" width="600" height="100"></canvas>
                     </div>
                 </div>
             </section>
@@ -157,6 +167,8 @@
     <script src="{{ url_for('static', filename='js/components/ab-comparison-chart.js') }}"></script>
     <script src="{{ url_for('static', filename='js/components/impact-panel.js') }}"></script>
     <script src="{{ url_for('static', filename='js/components/safety-monitor.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/ai-voice-interface.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/gemini-voice.js') }}"></script>
     <script src="{{ url_for('static', filename='js/components/voice-log.js') }}"></script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>

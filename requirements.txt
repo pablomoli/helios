@@ -23,10 +23,7 @@ google-adk==0.1.0
 # Data Processing
 numpy==1.26.2
 
-# Voice Control
-SpeechRecognition==3.10.0
-pvporcupine==3.0.0
-pvrecorder==1.2.1
+# Voice Control (ADK handles audio natively)
 pyttsx3==2.90  # Cross-platform TTS (Windows/Linux/macOS)
 
 # Development

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Helios AI is a voice-controlled solar tracking system with real-time Arduino hardware integration. The system uses WebSocket-based hub-and-spoke architecture where all services communicate through a central Serial WebSocket Bridge (port 5000).
+Helios AI is a voice-controlled solar tracking system with real-time Arduino hardware integration. The system uses a **single-service architecture** where the dashboard (port 5000) handles all functionality including voice control, WebSocket communication, and UI.
 
 ## Development Setup
 
@@ -22,7 +22,7 @@ python config/config.py
 ### Required API Keys (.env file)
 
 ```bash
-PORCUPINE_API_KEY=your_key_here          # Free from console.picovoice.ai
+GOOGLE_GENAI_API_KEY=your_key_here      # Gemini API from ai.google.dev
 OPENWEATHER_API_KEY=your_key_here        # Free from openweathermap.org
 WEBSOCKET_SERVER_URL=ws://localhost:5000
 DASHBOARD_PORT=5000
@@ -32,108 +32,101 @@ DASHBOARD_PORT=5000
 
 ## Running the System
 
-The system requires multiple services running concurrently. Use separate terminals or tmux.
-
-### Minimal Setup (Voice Control Only)
+**Single Command Start:**
 
 ```bash
-# Terminal 1: Voice Agent API (handles queries + TTS)
-python services/voice_agent_api.py
-
-# Terminal 2: Voice Listener (wake word detection + STT)
-python services/voice_listener.py
+./start_helios.sh
 ```
 
-### Full System (with Arduino)
+This starts the dashboard on http://localhost:5000 - everything runs in one service!
+
+**To Stop:**
 
 ```bash
-# Terminal 1: Serial Bridge (Arduino ↔ WebSocket)
-python services/serial_websocket_bridge.py
-
-# Terminal 2: Voice Agent API
-python services/voice_agent_api.py
-
-# Terminal 3: Voice Listener
-python services/voice_listener.py
-
-# Terminal 4: Dashboard (optional)
-python dashboard/dashboard.py
+./stop_helios.sh
 ```
 
-## Architecture: Hub-and-Spoke WebSocket Model
+## Architecture: Single-Service Model (Option A)
 
-**Critical Concept:** The Serial WebSocket Bridge is the ONLY component that communicates with Arduino. All other services are WebSocket clients that connect to the bridge.
+**Critical Concept:** Everything runs through the dashboard on port 5000. No separate services needed.
 
 ```
 ┌─────────────────────────────────────────────────┐
-│     Serial WebSocket Bridge (Port 5000)         │
-│     • Reads Arduino USB serial                  │
-│     • Broadcasts to all WebSocket clients       │
-│     • Forwards commands to Arduino              │
-└──────────┬──────────────────────────────────────┘
-           │ WebSocket Hub
+│     Dashboard (Port 5000) - ALL-IN-ONE          │
+│     • Flask web server                          │
+│     • WebSocket hub (SocketIO)                  │
+│     • Browser-based voice control (Web Audio)   │
+│     • Gemini 2.5 Flash Native Audio Dialog      │
+│     • Real-time Arduino data visualization      │
+│     • Command routing to Arduino                │
+└─────────────────────────────────────────────────┘
            │
-    ┌──────┴──────┬──────────┬──────────┬─────────┐
-    │             │          │          │         │
-    ▼             ▼          ▼          ▼         ▼
-Dashboard   Voice Agent  Safety    AI Logic  (any client)
-            (Gemini)     Monitor
+           ▼
+    Arduino (USB Serial)
 ```
 
 ### WebSocket Events
 
-**From Arduino (via bridge):**
+**From Arduino (via dashboard):**
 - `sensors_raw` - LDR sensors, voltage, current, power (every 1-2s)
 - `status` - Mode, pan/tilt angles, sun position
 - `impact` - Energy saved (kWh)
 - `safety` - Safety alerts, servo health, temperature
 - `ai_performance_delta` - A/B comparison data
 
-**To Arduino (via bridge):**
+**To Arduino (via dashboard):**
 - `command_position` - Move servos: `{"pan_angle_deg": 90, "tilt_angle_deg": 45}`
 - `command_mode` - Switch mode: `{"mode": "Predictive"}` or `{"mode": "Reactive"}`
+
+**Voice Control Events:**
+- `voice_log` - Voice queries and responses logged to dashboard
 
 **Important:** WebSocket events use centralized constants from `config.config.Events` class.
 
 ## Voice Control System
 
-Voice control uses a three-stage pipeline optimized for wake-word triggered single-shot responses.
+Voice control uses **browser-based Web Audio API** with Gemini 2.5 Flash Native Audio Dialog integration.
 
 ### Components
 
-1. **voice_listener.py** - Porcupine wake word ("computer") + Google STT
-2. **voice_agent_api.py** - Keyword-based query routing + pyttsx3 TTS (cross-platform)
-3. **adk/helios_agent/agent.py** - Gemini agent with tools that read/control Arduino
+1. **dashboard/static/js/components/gemini-voice.js** - Browser microphone capture + audio processing
+2. **dashboard/voice_handler.py** - Backend Gemini integration with wake word detection
+3. **dashboard/static/js/components/ai-voice-interface.js** - Spectrogram visualization
 
 ### Voice Flow
 
 ```
-Say "computer" → Porcupine detects → Say question → Google STT transcribes
+Click 🎤 button → Browser captures audio → Web Audio API processes
                                                     ↓
-                                    voice_listener sends text via WebSocket
+                                    Send audio to /api/voice-query
                                                     ↓
-                            voice_agent_api.py routes to agent tools
+                        voice_handler.py detects "Helios" wake word
                                                     ↓
-                                Agent tool reads latest_data or sends command
+                            Gemini 2.5 processes query with system context
                                                     ↓
-                            pyttsx3 speaks response (Windows/Linux/macOS)
+                        Response sent back to browser + spoken via Web Speech API
+                                                    ↓
+                            Spectrogram visualizes audio in real-time
 ```
 
-### Gemini Agent Integration
+### Gemini Integration
 
-The agent in `adk/helios_agent/agent.py` has two types of tools:
+The voice handler in `dashboard/voice_handler.py` integrates with Gemini:
 
-**Read Tools** (access Arduino data):
-- `get_status()` - Reads `latest_data['sensors']` and `latest_data['status']`
-- `get_impact()` - Reads `latest_data['impact']`
-- `get_safety_status()` - Reads `latest_data['safety']`
-- `explain_delta()` - Reads `latest_data['performance_delta']`
+**System Context** (automatically provided):
+- Current sensor data (power, voltage, LDR values)
+- System status (mode, pan/tilt angles)
+- Safety status
+- Impact metrics (energy saved)
 
-**Control Tools** (send commands to Arduino):
-- `switch_mode(mode)` - Emits `command_mode` WebSocket event
-- `move_to(pan, tilt)` - Emits `command_position` WebSocket event
+**Wake Word Detection:**
+- Listens for "Helios" at the start of user input
+- Only responds when wake word is detected
 
-**Critical:** The agent maintains a global `latest_data` dict that's automatically updated by WebSocket listeners. Tools access this dict for real-time Arduino data.
+**Response Generation:**
+- Uses Gemini 2.5 Flash Native Audio Dialog model
+- Processes audio directly (native audio support)
+- Returns natural language responses based on system state
 
 ## Arduino Communication Protocol
 
@@ -152,7 +145,7 @@ Arduino communicates via USB serial (9600 baud) using JSON messages with `\n` te
 {"type": "mode", "mode": "Predictive"}
 ```
 
-The `type` field determines how `serial_websocket_bridge.py` routes the data to WebSocket events.
+The `type` field determines how dashboard routes the data to WebSocket events.
 
 ## Configuration System
 
@@ -163,11 +156,15 @@ from config.config import Config, Events
 
 # Access config
 Config.WEBSOCKET_SERVER_URL  # ws://localhost:5000
-Config.OPENWEATHER_API_KEY   # Never log this!
+Config.GOOGLE_GENAI_API_KEY  # Never log this!
 
 # Use event constants
-sio.emit(Events.COMMAND_MODE, {"mode": "Predictive"})
-sio.on(Events.SENSORS_RAW, handler_function)
+socketio.emit(Events.COMMAND_MODE, {"mode": "Predictive"})
+
+@socketio.on(Events.SENSORS_RAW)
+def on_sensors(data):
+    # Process sensor data
+    pass
 ```
 
 **Safe config display:**
@@ -177,60 +174,109 @@ print(Config.get_safe_config_string())  # Hides secrets
 
 ## Key Design Patterns
 
-### Pattern 1: WebSocket Client Initialization
+### Pattern 1: Browser-Based Voice Control
 
-All services that connect to the bridge follow this pattern:
+Voice control runs entirely in the browser using Web Audio API:
 
-```python
-import socketio
-from config.config import Config, Events
+```javascript
+class GeminiVoice {
+    async startListening() {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {echoCancellation: true, noiseSuppression: true}
+        });
 
-sio = socketio.Client()
+        this.audioContext = new AudioContext();
+        this.analyser = this.audioContext.createAnalyser();
+        this.microphone = this.audioContext.createMediaStreamSource(stream);
+        this.microphone.connect(this.analyser);
 
-# Define event handlers BEFORE connecting
-@sio.on(Events.SENSORS_RAW)
-def on_sensors(data):
-    # Process sensor data
-    pass
+        // Connect to spectrogram visualization
+        window.aiVoiceInterface.startRealAudio(this.analyser);
 
-# Connect to bridge
-sio.connect(Config.WEBSOCKET_SERVER_URL)
+        // Record audio and send to backend
+        this.mediaRecorder = new MediaRecorder(stream);
+        this.mediaRecorder.start();
+    }
+
+    async processAudio(audioBlob) {
+        const base64Audio = await this.blobToBase64(audioBlob);
+        const response = await fetch('/api/voice-query', {
+            method: 'POST',
+            body: JSON.stringify({
+                audio: base64Audio,
+                system_data: this.getSystemData()
+            })
+        });
+
+        const result = await response.json();
+        if (result.wake_word_detected && result.response_text) {
+            this.speak(result.response_text);
+        }
+    }
+}
 ```
 
-### Pattern 2: Agent Tool with Latest Data
+### Pattern 2: Backend Voice Processing
 
-Agent tools read from the global `latest_data` dict that's updated by WebSocket listeners:
+Voice handler processes audio with Gemini and system context:
 
 ```python
-@tool
-def get_status() -> dict:
-    """Get current status from Arduino"""
-    init_websocket()  # Ensure connected
+def process_voice_query(audio_data, wake_word_detected=False):
+    """Process voice query using Gemini"""
+    if not wake_word_detected:
+        return {'success': False, 'message': 'Wake word "Helios" not detected'}
 
-    # Read latest data (updated by WebSocket listeners)
-    status = latest_data['status']
-    sensors = latest_data['sensors']
+    # Get current system context
+    context = get_system_context()
+
+    # Send to Gemini with audio and context
+    # (Currently simplified for testing - see voice_handler.py)
 
     return {
-        "mode": status.get('mode'),
-        "current_power_mw": sensors.get('panel_power_mW')
+        'success': True,
+        'response_text': response,
+        'should_respond': True
     }
+
+def simple_wake_word_detection(audio_data):
+    """Detect 'Helios' wake word in audio"""
+    # Currently bypassed for testing (always returns True)
+    # TODO: Implement actual wake word detection
+    return True
 ```
 
-### Pattern 3: Sending Commands to Arduino
+### Pattern 3: Dashboard API Endpoints
 
-Commands are sent via WebSocket to the bridge, which forwards to Arduino:
+Dashboard provides REST endpoints for voice control:
 
 ```python
-@tool
-def switch_mode(mode: str) -> str:
-    """Switch tracking mode"""
-    init_websocket()
+@app.route('/api/gemini-config')
+def get_gemini_config():
+    """Provide Gemini API configuration"""
+    return {'api_key': Config.GOOGLE_GENAI_API_KEY}
 
-    # Emit command via WebSocket
-    sio.emit("command_mode", {"mode": mode})
+@app.route('/api/voice-query', methods=['POST'])
+def handle_voice_query_api():
+    """Handle voice query from browser"""
+    data = request.json
+    audio_data = data.get('audio')
+    system_data = data.get('system_data', {})
 
-    return f"Switched to {mode} mode"
+    # Update system context
+    update_system_data('sensors', system_data.get('sensors'))
+
+    # Process with wake word detection
+    wake_word_detected = simple_wake_word_detection(audio_data)
+
+    if wake_word_detected:
+        result = process_voice_query(audio_data, wake_word_detected=True)
+        return jsonify({
+            'wake_word_detected': True,
+            'response_text': result.get('response_text', ''),
+            'success': result.get('success', False)
+        })
+    else:
+        return jsonify({'wake_word_detected': False})
 ```
 
 ## Testing
@@ -239,14 +285,14 @@ def switch_mode(mode: str) -> str:
 # Test config loading
 python config/config.py
 
-# Test weather service
-python services/weather_service.py
+# Test dashboard startup
+./start_helios.sh
 
-# Test Arduino communication (without WebSocket)
-python services/serial_bridge.py
+# Check dashboard logs
+tail -f /tmp/helios_dashboard.log
 
-# Test TTS
-python -c "import pyttsx3; e=pyttsx3.init(); e.say('test'); e.runAndWait()"
+# Test TTS in browser (open browser console on dashboard)
+window.geminiVoice.speak('Test message')
 ```
 
 ## Common Development Tasks
@@ -254,33 +300,46 @@ python -c "import pyttsx3; e=pyttsx3.init(); e.say('test'); e.runAndWait()"
 ### Adding a New WebSocket Event
 
 1. Add event constant to `config/config.py` in `Events` class
-2. Update Arduino to send new JSON message type
-3. Update `serial_websocket_bridge.py` to handle the message
-4. Add listener in relevant service (agent, dashboard, etc.)
+2. Update Arduino to send new JSON message type (if applicable)
+3. Update dashboard to handle the event
+4. Update frontend JavaScript to display the data
 
-### Adding a New Voice Command
+### Adding a New Voice Command Capability
 
-1. Add keyword detection in `voice_agent_api.py` `handle_voice_query()`
-2. Create new agent tool in `adk/helios_agent/agent.py` if needed
-3. Update agent instructions to explain the new capability
+1. Update system context in `dashboard/voice_handler.py` `get_system_context()`
+2. Ensure Gemini has access to the data needed to answer queries
+3. Test by clicking mic button and saying "Helios, [your query]"
+
+### Debugging Voice Control
+
+```javascript
+// In browser console:
+console.log(window.geminiVoice); // Check voice control state
+console.log(window.aiVoiceInterface); // Check spectrogram state
+
+// Test microphone:
+navigator.mediaDevices.getUserMedia({audio: true})
+    .then(stream => console.log('Mic access OK'))
+    .catch(err => console.error('Mic error:', err));
+```
 
 ### Debugging WebSocket Communication
 
 ```python
-# Add verbose logging to any WebSocket client
-@sio.on('*')
+# In dashboard.py, add verbose logging:
+@socketio.on('*')
 def catch_all(event, data):
-    print(f"Event: {event}, Data: {data}")
+    print(f"SocketIO Event: {event}, Data: {data}")
 ```
 
 ## Important Constraints
 
-1. **Dashboard files:** Do NOT modify dashboard files unless explicitly requested by user
+1. **Single Service Architecture:** Everything runs through dashboard on port 5000 - no separate services
 2. **Security:** Never commit `.env` file or log API keys
 3. **Arduino safety:** Always validate servo angles (0-180°) before sending commands
-4. **WebSocket routing:** Only the Serial WebSocket Bridge talks to Arduino directly
-5. **Voice responses:** Keep agent responses concise (1-3 sentences) for TTS clarity
-6. **Platform compatibility:** TTS uses pyttsx3 (Windows SAPI / macOS NSSpeechSynthesizer / Linux espeak)
+4. **Voice responses:** Keep responses concise (1-3 sentences) for clarity
+5. **Browser compatibility:** Web Audio API requires HTTPS or localhost
+6. **Wake word:** System only responds when "Helios" is detected at start of input
 
 ## Project Structure
 
@@ -288,26 +347,49 @@ def catch_all(event, data):
 helios/
 ├── adk/
 │   └── helios_agent/
-│       └── agent.py              # Gemini agent with tools
+│       └── agent.py              # Legacy ADK agent (not used in Option A)
 ├── config/
+│   ├── __init__.py               # Exports Config and Events
 │   └── config.py                 # Centralized config + Events
 ├── dashboard/
-│   └── dashboard.py              # Flask web UI (DO NOT MODIFY)
+│   ├── dashboard.py              # Main Flask app (ALL-IN-ONE SERVICE)
+│   ├── voice_handler.py          # Gemini voice integration
+│   ├── templates/
+│   │   └── index.html            # Main dashboard UI
+│   └── static/
+│       ├── css/
+│       │   └── main.css          # Dashboard styles
+│       └── js/
+│           └── components/
+│               ├── gemini-voice.js          # Browser voice control
+│               └── ai-voice-interface.js    # Spectrogram visualization
 ├── docs/
 │   ├── SYSTEM_ARCHITECTURE.md    # Detailed architecture
 │   ├── ARDUINO_PROTOCOL.md       # Serial protocol spec
 │   ├── VOICE_SETUP.md           # Voice system setup
 │   └── AGENT_DATAFLOW.md        # Agent ↔ Arduino integration
 ├── services/
-│   ├── serial_websocket_bridge.py   # WebSocket hub (talks to Arduino)
-│   ├── voice_listener.py            # Wake word + STT
-│   ├── voice_agent_api.py           # Query routing + TTS
-│   ├── weather_service.py           # OpenWeatherMap API
-│   └── safety_monitor.py            # Safety checks
+│   └── (legacy services - not used in Option A)
 ├── .env                          # Secrets (never commit!)
 ├── requirements.txt              # Python dependencies
-└── VOICE_QUICKSTART.md          # Quick voice setup guide
+├── start_helios.sh              # Quick start script
+└── stop_helios.sh               # Stop script
 ```
+
+## Dashboard Layout
+
+The dashboard uses a 12-column × 3-row CSS grid layout:
+
+```
+Row 1: Sky Map (cols 1-6)        | Analytics (cols 7-12)
+Row 2: Performance Graph (cols 1-8) | Impact Metrics (cols 9-12)
+Row 3: AI Voice Interface (cols 1-8) | Safety Monitor (cols 9-12)
+```
+
+**AI Voice Interface Panel** (Horizontal Layout):
+- Left section: Wake word status + AI response text
+- Right section: Wide spectrogram canvas showing real-time audio
+- Mic button: Click to start/stop voice control
 
 ## Tracking Modes
 
@@ -316,8 +398,49 @@ The system supports two tracking strategies:
 - **Reactive Mode:** Uses LDR sensor differences to follow the sun
 - **Predictive Mode:** Uses astronomical calculations (time/location) to track sun position
 
-Users can switch modes via voice ("computer, switch to predictive mode") or dashboard.
+Users can switch modes via voice ("Helios, switch to predictive mode") or dashboard controls.
 
 ## Digital Twin Concept
 
 The system uses "micro-dither sampling" - briefly testing alternative positions to gather A/B comparison data. This data is published via `ai_performance_delta` WebSocket event and proves which tracking strategy is better with real measurements.
+
+## Current Development Status
+
+**Working:**
+- Dashboard single-service architecture
+- Browser-based voice control with Web Audio API
+- Real-time spectrogram visualization
+- WebSocket communication for Arduino data
+- Dashboard UI with all panels
+
+**In Testing:**
+- Wake word detection (currently bypassed - always returns True)
+- Gemini audio processing (currently using mock responses)
+
+**Next Steps:**
+1. Implement actual wake word detection in `voice_handler.py`
+2. Replace mock responses with real Gemini API calls
+3. Test end-to-end voice control flow with Arduino
+
+## Troubleshooting
+
+**Dashboard fails to start:**
+- Check logs: `tail -f /tmp/helios_dashboard.log`
+- Verify .env file has GOOGLE_GENAI_API_KEY
+- Check port 5000 is not in use: `lsof -i :5000`
+
+**Voice control not working:**
+- Check browser console for errors
+- Verify microphone permissions granted
+- Test mic access: `navigator.mediaDevices.getUserMedia({audio: true})`
+- Check Gemini API key is valid
+
+**Spectrogram not updating:**
+- Check if Web Audio API is connected: `console.log(window.aiVoiceInterface.isListening)`
+- Verify mic button was clicked to start recording
+- Check canvas element exists: `document.getElementById('spectrogramCanvas')`
+
+**Arduino not connected:**
+- Dashboard will still run in mock data mode
+- Check USB connection and serial port permissions
+- Verify Arduino is sending JSON messages with `\n` terminator
