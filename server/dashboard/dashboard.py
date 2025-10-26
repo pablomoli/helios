@@ -4,6 +4,7 @@ Serves the web interface and streams real-time data
 """
 from flask import Flask, render_template, request, jsonify, abort
 from flask_socketio import SocketIO, emit
+from flask_cors import CORS
 import time
 import sys
 from pathlib import Path
@@ -30,6 +31,20 @@ if not secret_key:
         raise RuntimeError('SECRET_KEY environment variable not set. Aborting startup for security reasons.')
 
 app.config['SECRET_KEY'] = secret_key
+
+# CORS Configuration for REST API endpoints
+# Allows React frontend (or any client) to make cross-origin requests
+cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',')
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [origin.strip() for origin in cors_origins],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    },
+    r"/health": {
+        "origins": [origin.strip() for origin in cors_origins]
+    }
+})
 
 # Restrict allowed origins for Socket.IO. Read from environment variable
 # ALLOWED_ORIGINS as comma-separated list. In production this must be set.
