@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helios AI - Solar Tracker Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+    <!-- SVG Icon Definitions -->
+    <svg style="display: none;">
+        <defs>
+            <!-- Gradients (must be defined first) -->
+            <linearGradient id="gradient-solar" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#FFB800;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#FFA000;stop-opacity:1" />
+            </linearGradient>
+
+            <linearGradient id="gradient-cyan" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#00D9FF;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#0099CC;stop-opacity:1" />
+            </linearGradient>
+
+            <linearGradient id="gradient-green" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#34D399;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#10B981;stop-opacity:1" />
+            </linearGradient>
+
+            <linearGradient id="gradient-success" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#34D399;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#10B981;stop-opacity:1" />
+            </linearGradient>
+
+            <linearGradient id="gradient-danger" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#F87171;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#EF4444;stop-opacity:1" />
+            </linearGradient>
+
+            <!-- Lightning Bolt Icon -->
+            <symbol id="icon-lightning" viewBox="0 0 24 24">
+                <path d="M13 2L3 14h8l-1 8 10-12h-8z" fill="#FFB800" stroke="#00D9FF" stroke-width="1" stroke-linejoin="round"/>
+            </symbol>
+
+            <!-- Location Pin Icon -->
+            <symbol id="icon-location" viewBox="0 0 24 24">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="#FFB800"/>
+            </symbol>
+
+            <!-- Energy/Power Icon (Lightning Bolt in Circle) -->
+            <symbol id="icon-energy" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="9" fill="none" stroke="#FFB800" stroke-width="2"/>
+                <path d="M13 7l-4 6h3l-1 4 4-6h-3l1-4z" fill="#FFB800"/>
+            </symbol>
+
+            <!-- Money/Cost Icon (Dollar Sign) -->
+            <symbol id="icon-cost" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="9" fill="none" stroke="#00D9FF" stroke-width="2"/>
+                <path d="M12 6v12M15 9.5c0-1.105-1.343-2-3-2s-3 .895-3 2c0 1.657 2.686 2 3 2 1.657 0 3 .895 3 2 0 1.105-1.343 2-3 2s-3-.895-3-2" stroke="#00D9FF" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+            </symbol>
+
+            <!-- Leaf/CO2 Icon - Simple and Clean to Match Design System -->
+            <symbol id="icon-leaf" viewBox="0 0 24 24">
+                <!-- Circle container to match other icons -->
+                <circle cx="12" cy="12" r="9" fill="none" stroke="#34D399" stroke-width="2"/>
+                <!-- Simple leaf shape - clean and recognizable -->
+                <path d="M12 7C12 7 9 8 9 11C9 13 10 14.5 12 15.5C12 15.5 12 15.5 12 15.5C14 14.5 15 13 15 11C15 8 12 7 12 7Z" fill="#34D399"/>
+                <!-- Stem -->
+                <line x1="12" y1="15.5" x2="12" y2="18" stroke="#34D399" stroke-width="1.5" stroke-linecap="round"/>
+                <!-- Center vein -->
+                <line x1="12" y1="7" x2="12" y2="15" stroke="#10B981" stroke-width="1" opacity="0.5"/>
+            </symbol>
+
+            <!-- Check/Success Icon -->
+            <symbol id="icon-check" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" fill="#34D399"/>
+                <path d="M9 12l2 2 4-4" stroke="#0a0e27" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            </symbol>
+
+            <!-- Warning/Alert Icon -->
+            <symbol id="icon-warning" viewBox="0 0 24 24">
+                <path d="M12 2L2 20h20L12 2z" fill="#F87171"/>
+                <path d="M12 9v4M12 17h.01" stroke="#0a0e27" stroke-width="2.5" stroke-linecap="round"/>
+            </symbol>
+        </defs>
+    </svg>
+</head>
+<body>
+    <!-- Voice Visualizer Overlay -->
+    <div id="voiceVisualizerOverlay" class="voice-visualizer-overlay" role="dialog" aria-modal="true" aria-labelledby="voiceVisualizerTitle" aria-describedby="voiceStatus">
+        <div class="voice-visualizer-container">
+            <div class="voice-visualizer-header">
+                <h3 id="voiceVisualizerTitle">Voice Assistant Active</h3>
+                <button id="closeVoiceVisualizer" class="close-visualizer-btn" aria-label="Close voice visualizer">×</button>
+            </div>
+            <canvas id="voiceVisualizerCanvas" class="voice-visualizer-canvas" aria-hidden="true"></canvas>
+            <div class="voice-visualizer-status">
+                <span id="voiceStatus">Ready to listen...</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="header-title-section">
+                <h1>
+                    <svg class="logo-icon" width="28" height="28">
+                        <use href="#icon-lightning"></use>
+                    </svg>
+                    Helios AI
+                </h1>
+                <span class="admin-badge">Admin Dashboard</span>
+            </div>
+            <div class="header-controls">
+                <button id="toggleVoiceVisualizer" class="voice-toggle-btn" title="Activate Voice Assistant" aria-label="Toggle voice assistant" aria-pressed="false">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" y1="19" x2="12" y2="23"></line>
+                        <line x1="8" y1="23" x2="16" y2="23"></line>
+                    </svg>
+                </button>
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Connecting...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <main class="dashboard-grid">
+            <!-- 1. Live Sky Map (Top-Left) -->
+            <section class="panel sky-map-panel">
+                <h2>Live Cloud Coverage Map</h2>
+                <div class="sky-map-content">
+                    <div id="cloudMap" class="cloud-map"></div>
+                    <div class="cloud-info">
+                        <div class="cloud-cover-display">
+                            <span class="cloud-value" id="cloudValue">--</span>
+                            <span class="cloud-label">Cloud Cover</span>
+                        </div>
+                        <div class="location-display" id="locationDisplay">
+                            <svg class="location-icon" width="18" height="18">
+                                <use href="#icon-location"></use>
+                            </svg>
+                            <span class="location-text">Detecting location...</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 2. Real-Time Analytics (Top-Right) -->
+            <section class="panel analytics-panel">
+                <h2>Real-Time Analytics</h2>
+                <div class="analytics-grid">
+                    <div class="metric primary">
+                        <span class="metric-label">Current Power</span>
+                        <span class="metric-value" id="currentPower">-- mW</span>
+                    </div>
+                    <div class="metric primary">
+                        <span class="metric-label">Energy Today</span>
+                        <span class="metric-value" id="energyToday">-- mWh</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Mode</span>
+                        <span class="metric-value mode-badge" id="currentMode">--</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Panel Voltage</span>
+                        <span class="metric-value" id="panelVoltage">-- V</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Panel Current</span>
+                        <span class="metric-value" id="panelCurrent">-- mA</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3. A/B Comparison Graph (Center, Large) -->
+            <section class="panel graph-panel">
+                <h2>Digital Twin Performance</h2>
+                <div class="graph-header">
+                    <div class="delta-badge" id="deltaBadge">
+                        <span class="delta-value">--</span>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="performanceChart"></canvas>
+                </div>
+            </section>
+
+            <!-- 4. Impact Metrics Panel (Bottom-Left) -->
+            <section class="panel impact-panel">
+                <h2>Environmental Impact</h2>
+                <div class="impact-metrics">
+                    <div class="impact-item">
+                        <div class="impact-icon energy">
+                            <svg width="36" height="36">
+                                <use href="#icon-energy"></use>
+                            </svg>
+                        </div>
+                        <div class="impact-data">
+                            <span class="impact-value" id="impactEnergy">0.000</span>
+                            <span class="impact-unit">kWh</span>
+                            <span class="impact-label">Energy Generated</span>
+                        </div>
+                    </div>
+                    <div class="impact-item">
+                        <div class="impact-icon cost">
+                            <svg width="36" height="36">
+                                <use href="#icon-cost"></use>
+                            </svg>
+                        </div>
+                        <div class="impact-data">
+                            <span class="impact-value" id="impactCost">$0.00</span>
+                            <span class="impact-unit"></span>
+                            <span class="impact-label">Cost Saved</span>
+                        </div>
+                    </div>
+                    <div class="impact-item">
+                        <div class="impact-icon co2">
+                            <svg width="36" height="36">
+                                <use href="#icon-leaf"></use>
+                            </svg>
+                        </div>
+                        <div class="impact-data">
+                            <span class="impact-value" id="impactCO2">0.0</span>
+                            <span class="impact-unit">g</span>
+                            <span class="impact-label">CO2 Avoided</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 5. Safety Monitor (Bottom-Center) -->
+            <section class="panel safety-panel">
+                <h2>Safety Monitor</h2>
+                <div class="safety-content">
+                    <div class="safety-status" id="safetyStatus">
+                        <svg class="status-icon" width="80" height="80">
+                            <use href="#icon-check"></use>
+                        </svg>
+                        <div class="status-text">Normal</div>
+                    </div>
+                    <div class="safety-details">
+                        <div class="safety-item">
+                            <span class="safety-label">Servo Status:</span>
+                            <span class="safety-value" id="servoStatus">normal</span>
+                        </div>
+                        <div class="safety-item">
+                            <span class="safety-label">Angle Check:</span>
+                            <span class="safety-value" id="angleCheck">OK</span>
+                        </div>
+                        <div class="safety-item">
+                            <span class="safety-label">Temperature:</span>
+                            <span class="safety-value" id="temperature">--°F</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 6. Voice Log (Bottom-Right) -->
+            <section class="panel voice-log-panel">
+                <h2>Voice Command Log</h2>
+                <div class="voice-log" id="voiceLog">
+                    <div class="voice-entry">
+                        <span class="voice-time">--:--:--</span>
+                        <span class="voice-text">System started</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="{{ url_for('static', filename='js/connection-manager.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/sky-map.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/analytics.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/ab-comparison-chart.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/impact-panel.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/safety-monitor.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/voice-log.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/voice-visualizer.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+    <!-- Voice Visualizer Initialization -->
+    <script>
+        // Initialize voice visualizer when page loads
+        let voiceVisualizer = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const overlay = document.getElementById('voiceVisualizerOverlay');
+            const toggleBtn = document.getElementById('toggleVoiceVisualizer');
+            const closeBtn = document.getElementById('closeVoiceVisualizer');
+
+            // Initialize visualizer with error handling
+            try {
+                voiceVisualizer = new VoiceVisualizer('voiceVisualizerCanvas');
+            } catch (error) {
+                console.error('[Helios AI] Failed to initialize voice visualizer:', error);
+                toggleBtn.disabled = true;
+                toggleBtn.style.opacity = '0.5';
+                toggleBtn.title = 'Voice visualizer unavailable';
+                return;
+            }
+
+            // Toggle voice visualizer
+            toggleBtn.addEventListener('click', async () => {
+                try {
+                    overlay.classList.add('active');
+                    toggleBtn.setAttribute('aria-pressed', 'true');
+                    await voiceVisualizer.start();
+                } catch (error) {
+                    console.error('[Helios AI] Failed to start voice visualizer:', error);
+                    overlay.classList.remove('active');
+                    toggleBtn.setAttribute('aria-pressed', 'false');
+                    alert('Failed to start voice assistant. Please check microphone permissions.');
+                }
+            });
+
+            // Close voice visualizer
+            closeBtn.addEventListener('click', () => {
+                overlay.classList.remove('active');
+                toggleBtn.setAttribute('aria-pressed', 'false');
+                voiceVisualizer.stop();
+            });
+
+            // Close on overlay click (outside container)
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    overlay.classList.remove('active');
+                    toggleBtn.setAttribute('aria-pressed', 'false');
+                    voiceVisualizer.stop();
+                }
+            });
+
+            console.log('[Helios AI] Voice visualizer ready');
+        });
+    </script>
+</body>
+</html>
