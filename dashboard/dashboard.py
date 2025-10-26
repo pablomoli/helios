@@ -1,9 +1,11 @@
 """
 Flask Dashboard with WebSocket support for Helios AI
 Serves the web interface and streams real-time data
+Includes Gemini Live API voice chat integration
 """
 from flask import Flask, render_template, request, jsonify, abort
 from flask_socketio import SocketIO, emit
+from flask_sock import Sock
 import time
 import sys
 from pathlib import Path
@@ -11,10 +13,18 @@ import os
 from threading import Thread, Lock
 import requests
 from cachetools import TTLCache, LRUCache
+import websockets
+import ssl
+import certifi
+import base64
+import json
+import asyncio
+import queue
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import Config, Topics
 from mock_data.data_generator import MockDataGenerator
+from services.arduino_agent import ArduinoDataAgent
 
 app = Flask(__name__)
 
@@ -48,15 +58,67 @@ else:
         raise RuntimeError('ALLOWED_ORIGINS environment variable must be set in production to restrict Socket.IO origins.')
 
 socketio = SocketIO(app, cors_allowed_origins=cors_allowed_origins)
+sock = Sock(app)
 
 # Mock data generator
 mock_generator = MockDataGenerator()
+
+# Gemini Voice Chat Configuration
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+GEMINI_MODEL = "models/gemini-2.0-flash-exp"
+GEMINI_WS_URL = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key={GEMINI_API_KEY}" if GEMINI_API_KEY else None
+
+# System instruction for Helios AI voice assistant (with real-time data)
+def get_voice_instruction_with_data():
+    """Generate system instruction with current Arduino data"""
+    with arduino_data_lock:
+        data = arduino_current_data.copy()
+
+    return {
+        "parts": [{
+            "text": f"""You are Helios, a concise AI assistant for a solar panel dashboard.
+
+CURRENT REAL-TIME DATA FROM ARDUINO:
+- Voltage: {data['voltage']} V
+- Current: {data['current']} mA
+- Power: {data['power']} mW
+- Temperature: {data['temperature']}°C
+- Panel Azimuth: {data['azimuth']}°
+- Panel Elevation: {data['elevation']}°
+- Cloud Coverage: {data['cloud_coverage']}%
+
+CRITICAL RULES:
+- Keep answers to 1-2 sentences MAXIMUM
+- Use the EXACT real-time values shown above when asked about current data
+- Answer ONLY what was asked - don't elaborate
+- Never ask follow-up questions unless unclear
+- Be direct and factual
+- When greeted, say "Hello! I can tell you about your solar system's current performance" """
+        }]
+    }
 
 # Global state
 dashboard_state = {
     "mock_mode": Config.MOCK_DATA_MODE,
     "connected_clients": 0
 }
+
+# Arduino real-time data (shared between Arduino agent and voice agent)
+arduino_data_lock = Lock()
+arduino_current_data = {
+    "voltage": 0,
+    "current": 0,
+    "power": 0,
+    "temperature": 0,
+    "azimuth": 0,
+    "elevation": 0,
+    "cloud_coverage": 0,
+    "timestamp": None,
+    "last_update": 0
+}
+
+# Arduino agent instance (initialized on startup)
+arduino_agent = None
 
 # Lock to guard connected_clients increments/decrements
 connected_clients_lock = Lock()
@@ -384,13 +446,336 @@ def start_broadcast_thread():
     thread.start()
 
 
+# ============================================================================
+# GEMINI VOICE CHAT INTEGRATION
+# ============================================================================
+
+class GeminiVoiceConnection:
+    """Manages WebSocket connection to Gemini Live API for voice chat"""
+
+    def __init__(self, client_ws):
+        self.client_ws = client_ws
+        self.gemini_ws = None
+        self.client_to_gemini_queue = queue.Queue()
+        self.running = False
+        self.loop = None  # Store event loop to reuse
+
+    def connect_to_gemini(self):
+        """Establish WebSocket connection to Gemini Live API"""
+        if not GEMINI_API_KEY or not GEMINI_WS_URL:
+            print("[Gemini] API key not configured")
+            return False
+
+        try:
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            # Create and store event loop
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+            self.gemini_ws = self.loop.run_until_complete(
+                websockets.connect(GEMINI_WS_URL, ssl=ssl_context)
+            )
+            print("[Gemini] WebSocket connected")
+            return True
+        except Exception as e:
+            print(f"[Gemini] Connection error: {e}")
+            return False
+
+    def send_setup_message(self):
+        """Send initial setup configuration to Gemini"""
+        try:
+            setup_msg = {
+                "setup": {
+                    "model": GEMINI_MODEL,
+                    "generation_config": {
+                        "response_modalities": ["AUDIO"],
+                        "speech_config": {
+                            "voice_config": {
+                                "prebuilt_voice_config": {
+                                    "voice_name": "Puck"
+                                }
+                            }
+                        }
+                    },
+                    "system_instruction": get_voice_instruction_with_data()
+                }
+            }
+
+            # Reuse the same event loop
+            asyncio.set_event_loop(self.loop)
+            self.loop.run_until_complete(self.gemini_ws.send(json.dumps(setup_msg)))
+            print("[Gemini] Setup message sent")
+
+            response = self.loop.run_until_complete(self.gemini_ws.recv())
+            response_data = json.loads(response)
+
+            if "setupComplete" in response_data:
+                print("[Gemini] Setup complete")
+
+                # Send initial prompt to start conversation
+                initial_msg = {
+                    "client_content": {
+                        "turns": [{
+                            "role": "user",
+                            "parts": [{"text": "Hello! Introduce yourself briefly as Helios, the solar dashboard AI assistant."}]
+                        }],
+                        "turn_complete": True
+                    }
+                }
+                self.loop.run_until_complete(self.gemini_ws.send(json.dumps(initial_msg)))
+                print("[Gemini] Initial prompt sent")
+                return True
+            else:
+                print(f"[Gemini] Setup failed: {response_data}")
+                return False
+
+        except Exception as e:
+            print(f"[Gemini] Setup error: {e}")
+            return False
+
+    def client_to_gemini_worker(self):
+        """Thread: Forward audio from client to Gemini"""
+        print("[Worker] Client->Gemini thread started")
+
+        try:
+            while self.running:
+                try:
+                    audio_data = self.client_to_gemini_queue.get(timeout=0.1)
+                    audio_b64 = base64.b64encode(audio_data).decode('utf-8')
+
+                    message = {
+                        "realtime_input": {
+                            "media_chunks": [{
+                                "mime_type": "audio/pcm;rate=16000",
+                                "data": audio_b64
+                            }]
+                        }
+                    }
+
+                    # Use asyncio.run_coroutine_threadsafe for thread-safe execution
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.gemini_ws.send(json.dumps(message)),
+                        self.loop
+                    )
+                    future.result(timeout=5)  # Wait up to 5 seconds
+
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    print(f"[Worker] Client->Gemini error: {e}")
+                    break
+
+        finally:
+            print("[Worker] Client->Gemini thread stopped")
+
+    def gemini_to_client_worker(self):
+        """Thread: Forward audio from Gemini to client"""
+        print("[Worker] Gemini->Client thread started")
+
+        try:
+            while self.running:
+                try:
+                    # Use asyncio.run_coroutine_threadsafe for thread-safe execution
+                    future = asyncio.run_coroutine_threadsafe(
+                        asyncio.wait_for(self.gemini_ws.recv(), timeout=0.1),
+                        self.loop
+                    )
+                    message = future.result(timeout=5)
+
+                    data = json.loads(message)
+
+                    if "serverContent" in data:
+                        server_content = data["serverContent"]
+
+                        if "modelTurn" in server_content:
+                            parts = server_content["modelTurn"].get("parts", [])
+
+                            for part in parts:
+                                if "inlineData" in part:
+                                    audio_b64 = part["inlineData"].get("data", "")
+
+                                    if audio_b64:
+                                        audio_bytes = base64.b64decode(audio_b64)
+                                        try:
+                                            self.client_ws.send(audio_bytes)
+                                        except Exception as e:
+                                            print(f"[Worker] Send to client error: {e}")
+                                            self.running = False
+                                            break
+
+                        if server_content.get("turnComplete"):
+                            print("[Gemini] Turn complete")
+
+                except asyncio.TimeoutError:
+                    continue
+                except Exception as e:
+                    print(f"[Worker] Gemini->Client error: {e}")
+                    break
+
+        finally:
+            print("[Worker] Gemini->Client thread stopped")
+
+    def run_event_loop(self):
+        """Run the event loop in a separate thread"""
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_forever()
+
+    def start(self):
+        """Start the bidirectional streaming"""
+        self.running = True
+
+        # Start event loop in its own thread
+        loop_thread = Thread(target=self.run_event_loop, daemon=True)
+        loop_thread.start()
+
+        client_thread = Thread(target=self.client_to_gemini_worker, daemon=True)
+        gemini_thread = Thread(target=self.gemini_to_client_worker, daemon=True)
+
+        client_thread.start()
+        gemini_thread.start()
+
+        client_thread.join()
+        gemini_thread.join()
+
+        # Stop the event loop
+        self.loop.call_soon_threadsafe(self.loop.stop)
+
+    def stop(self):
+        """Stop the streaming and cleanup"""
+        self.running = False
+        try:
+            if self.loop and self.gemini_ws:
+                # Schedule close on the event loop
+                future = asyncio.run_coroutine_threadsafe(
+                    self.gemini_ws.close(),
+                    self.loop
+                )
+                future.result(timeout=2)
+                print("[Gemini] WebSocket closed")
+
+                # Stop the event loop
+                self.loop.call_soon_threadsafe(self.loop.stop)
+        except Exception as e:
+            print(f"[Gemini] Stop error: {e}")
+
+
+@sock.route('/ws/gemini-voice')
+def websocket_gemini_voice(ws):
+    """WebSocket endpoint for Gemini voice chat"""
+    print(f"[Gemini Voice] Client connected from {request.remote_addr}")
+
+    if not GEMINI_API_KEY:
+        ws.send(json.dumps({"error": "GEMINI_API_KEY not configured"}))
+        return
+
+    connection = GeminiVoiceConnection(ws)
+
+    if not connection.connect_to_gemini():
+        ws.send(json.dumps({"error": "Failed to connect to Gemini"}))
+        return
+
+    if not connection.send_setup_message():
+        ws.send(json.dumps({"error": "Gemini setup failed"}))
+        return
+
+    ws.send(json.dumps({"status": "ready"}))
+
+    worker_thread = Thread(target=connection.start, daemon=True)
+    worker_thread.start()
+
+    try:
+        while True:
+            data = ws.receive()
+
+            if data is None:
+                print("[Gemini Voice] Client disconnected")
+                break
+
+            if isinstance(data, bytes):
+                connection.client_to_gemini_queue.put(data)
+
+            elif isinstance(data, str):
+                try:
+                    message = json.loads(data)
+                    if message.get("type") == "ping":
+                        ws.send(json.dumps({"type": "pong"}))
+                except:
+                    pass
+
+    except Exception as e:
+        print(f"[Gemini Voice] Error: {e}")
+    finally:
+        connection.stop()
+        print("[Gemini Voice] Connection closed")
+
+
+# ============================================================================
+# ARDUINO DATA INTEGRATION
+# ============================================================================
+
+def on_arduino_data_update(data: dict):
+    """Callback when Arduino agent receives new data"""
+    global arduino_current_data
+
+    with arduino_data_lock:
+        # Update shared state
+        arduino_current_data.update(data)
+        arduino_current_data['last_update'] = time.time()
+
+    # Broadcast to dashboard via SocketIO
+    socketio.emit('arduino_data', data)
+
+    print(f"[Arduino] Data updated: Power={data.get('power', 0)}mW, Temp={data.get('temperature', 0)}°C")
+
+
+def start_arduino_agent():
+    """Initialize and start the Arduino data collection agent"""
+    global arduino_agent
+
+    # Check if Arduino mode is enabled
+    arduino_enabled = os.getenv('ARDUINO_ENABLED', 'false').lower() == 'true'
+    arduino_port = os.getenv('ARDUINO_PORT', '/dev/ttyUSB0')
+    arduino_baud = int(os.getenv('ARDUINO_BAUD_RATE', '9600'))
+
+    if not arduino_enabled:
+        print("[Arduino] Arduino mode disabled (set ARDUINO_ENABLED=true in .env)")
+        return None
+
+    try:
+        print(f"[Arduino] Starting Arduino agent on {arduino_port}...")
+
+        arduino_agent = ArduinoDataAgent(
+            serial_port=arduino_port,
+            baud_rate=arduino_baud,
+            model_name='gemini-2.5-flash',
+            update_interval=1.0  # Read every 1 second
+        )
+
+        # Register callback
+        arduino_agent.register_callback(on_arduino_data_update)
+
+        # Start agent
+        arduino_agent.start()
+
+        print("[Arduino] Arduino agent started successfully")
+        return arduino_agent
+
+    except Exception as e:
+        print(f"[Arduino] Failed to start: {e}")
+        print("[Arduino] Continuing without Arduino (using mock data)")
+        return None
+
+
 if __name__ == '__main__':
     print("=" * 60)
     print("Helios AI Dashboard Starting...")
     print("=" * 60)
     print(f"Mock Data Mode: {dashboard_state['mock_mode']}")
     print(f"Dashboard URL: http://localhost:{Config.DASHBOARD_PORT}")
+    print(f"Gemini Voice Chat: {'Enabled' if GEMINI_API_KEY else 'Disabled (GEMINI_API_KEY not set)'}")
     print("=" * 60)
+
+    # Start Arduino agent (if enabled)
+    start_arduino_agent()
 
     # Start background broadcast thread
     start_broadcast_thread()

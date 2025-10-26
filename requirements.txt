@@ -1,29 +1,40 @@
 # Core Flask & WebSocket
-flask==3.0.0
-flask-socketio==5.3.5
-python-socketio==5.10.0
+flask>=3.0.0
+flask-socketio>=5.3.0
+python-socketio>=5.10.0
 
 # MQTT Client
-paho-mqtt==1.6.1
+paho-mqtt>=1.6.1
 
 # Environment Variables
-python-dotenv==1.0.0
+python-dotenv>=1.0.0
 
 # Sun Position Calculation (Offline)
-pysolar==0.10
-pytz==2023.3
+pysolar>=0.10
+pytz>=2023.3
 
 # HTTP Requests (Weather API)
-requests==2.31.0
+requests>=2.31.0
 
 # Caching utilities (TTL and bounded caches)
-cachetools==5.3.2
+cachetools>=5.3.0
 
 # Google ADK (Voice Agent)
-google-adk==0.1.0
+google-adk>=0.1.0
+
+# Voice Chat - Gemini Live API
+flask-sock>=0.7.0
+simple-websocket>=1.0.0
+websockets>=12.0
+certifi>=2024.2.0
+flask-cors>=4.0.0
+
+# Arduino Data Collection Agent
+pyserial>=3.5
+google-generativeai>=0.3.0
 
 # Data Processing
-numpy==1.26.2
+numpy>=1.26.0
 
 # Development
-pytest==7.4.3
+pytest>=7.4.0
